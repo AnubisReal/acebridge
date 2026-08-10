@@ -205,8 +205,8 @@ func (a *App) createRedBullPadelSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := result.LastInsertId()
-	if err := a.syncSource(r.Context(), id); err != nil {
-		a.logger.Warn("initial Red Bull sync failed", "source_id", id, "error", err)
+	if _, err := a.queueSyncSource(r.Context(), id); err != nil {
+		a.logger.Warn("cannot queue initial Red Bull sync", "source_id", id, "error", err)
 	}
 	a.sourceByID(w, r, id, http.StatusCreated)
 }
@@ -382,8 +382,8 @@ func (a *App) createURLSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := result.LastInsertId()
-	if err := a.syncSource(r.Context(), id); err != nil {
-		a.logger.Warn("initial source sync failed", "source_id", id, "error", err)
+	if _, err := a.queueSyncSource(r.Context(), id); err != nil {
+		a.logger.Warn("cannot queue initial source sync", "source_id", id, "error", err)
 	}
 	a.sourceByID(w, r, id, http.StatusCreated)
 }

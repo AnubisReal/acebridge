@@ -87,10 +87,45 @@ func TestURLJSONSourceImport(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create source status %d: %s", response.Code, response.Body.String())
 	}
-	response = perform(a.Routes(), http.MethodGet, "/api/v1/channels", nil, "")
 	var channels []Channel
-	if err := json.Unmarshal(response.Body.Bytes(), &channels); err != nil || len(channels) != 1 || channels[0].Name != "Canal JSON" || channels[0].Group != "Deportes" || channels[0].TVGID != "canal.json" {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		response = perform(a.Routes(), http.MethodGet, "/api/v1/channels", nil, "")
+		channels = nil
+		if json.Unmarshal(response.Body.Bytes(), &channels) == nil && len(channels) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(channels) != 1 || channels[0].Name != "Canal JSON" || channels[0].Group != "Deportes" || channels[0].TVGID != "canal.json" {
 		t.Fatalf("unexpected channels: %s", response.Body.String())
+	}
+}
+
+func TestURLSourceCreationDoesNotWaitForDownload(t *testing.T) {
+	a := testApp(t)
+	downloadStarted := make(chan struct{}, 1)
+	releaseDownload := make(chan struct{})
+	defer close(releaseDownload)
+	a.client = &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		downloadStarted <- struct{}{}
+		<-releaseDownload
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(testM3U)), Header: make(http.Header)}, nil
+	})}
+	a.sourceClient = a.client
+
+	started := time.Now()
+	response := perform(a.Routes(), http.MethodPost, "/api/v1/sources/url", strings.NewReader(`{"name":"Fuente lenta","url":"https://example.com/slow.m3u"}`), "application/json")
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create source status %d: %s", response.Code, response.Body.String())
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("source creation waited for download: %s", elapsed)
+	}
+	select {
+	case <-downloadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background source download did not start")
 	}
 }
 
