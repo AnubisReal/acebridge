@@ -1,0 +1,17 @@
+{
+  "name": "AceBridge",
+  "short_name": "AceBridge",
+  "description": "Gestor de canales AceStream y salida HLS para Jellyfin",
+  "start_url": "/#overview",
+  "display": "standalone",
+  "background_color": "#f7f8f5",
+  "theme_color": "#f7f8f5",
+  "icons": [
+    {
+      "src": "/brand/acebridge-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

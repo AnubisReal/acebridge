@@ -1,0 +1,193 @@
+name: Build, test and publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: acebridge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go quality checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+
+  container-test:
+    name: Container smoke test
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: acebridge:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start container
+        run: docker run -d --name acebridge-test -p 127.0.0.1:8080:8080 acebridge:test
+      - name: Wait for application and container health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8080/health/live >/dev/null && [ "$(docker inspect --format '{{.State.Health.Status}}' acebridge-test)" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs acebridge-test
+          docker inspect acebridge-test
+          exit 1
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: acebridge:test
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Stop test container
+        if: always()
+        run: docker rm --force acebridge-test || true
+
+  image:
+    name: Publish multi-platform image
+    if: github.event_name != 'pull_request'
+    needs: [test, container-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/acebridge
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-
+      - id: build-date
+        run: echo "value=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.build-date.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/acebridge@${{ steps.build.outputs.digest }}
+          artifact-name: acebridge-sbom.spdx.json
+          output-file: acebridge-sbom.spdx.json
+      - name: Attest image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/acebridge
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Attest image SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/acebridge
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: acebridge-sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign image keylessly
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/acebridge
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+
+  release:
+    name: Publish Linux binaries
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, container-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build Linux binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p dist
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          for ARCH in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath \
+              -ldflags="-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.builtAt=$BUILD_DATE" \
+              -o "dist/acebridge-linux-$ARCH" ./cmd/acebridge
+          done
+          cd dist
+          sha256sum acebridge-linux-* > checksums.txt
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --title "AceBridge $GITHUB_REF_NAME"
+          fi

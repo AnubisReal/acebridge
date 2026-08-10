@@ -1,0 +1,15 @@
+.git
+.github
+Canales
+data
+*.db
+README.md
+compose.yaml
+stack.yaml
+.env
+.env.*
+.product-design
+design-qa.md
+deploy
+scripts
+install.sh

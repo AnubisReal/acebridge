@@ -1,0 +1,10 @@
+.DS_Store
+/data/
+/acebridge
+*.db
+*.db-shm
+*.db-wal
+.env
+/Canales/
+/.product-design/
+/design-qa.md

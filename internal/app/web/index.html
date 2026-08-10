@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f7f8f5">
+  <meta name="description" content="AceBridge organiza canales AceStream y entrega una salida HLS estable para Jellyfin.">
+  <title>AceBridge</title>
+  <link rel="icon" type="image/png" href="/brand/acebridge-logo.png">
+  <link rel="apple-touch-icon" href="/brand/acebridge-logo.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="AceBridge">
+        <span class="brand-mark" aria-hidden="true"><img src="/brand/acebridge-logo.png" alt=""></span><span><strong>AceBridge</strong><small>Control</small></span>
+      </a>
+      <nav id="navigation">
+        <button class="nav-item active" data-view="overview"><img src="/icons/layout-dashboard.svg" alt="" aria-hidden="true">Resumen</button>
+        <button class="nav-item" data-view="channels"><img src="/icons/tv.svg" alt="" aria-hidden="true">Canales</button>
+        <button class="nav-item" data-view="sources"><img src="/icons/list-plus.svg" alt="" aria-hidden="true">Fuentes</button>
+        <button class="nav-item" data-view="monitor"><img src="/icons/activity.svg" alt="" aria-hidden="true">Monitor</button>
+        <button class="nav-item" data-view="output"><img src="/icons/cast.svg" alt="" aria-hidden="true">Salida Jellyfin</button>
+        <button class="nav-item" data-view="settings"><img src="/icons/settings.svg" alt="" aria-hidden="true">Configuración</button>
+      </nav>
+      <div class="sidebar-status"><i id="health-dot"></i><span><strong>AceBridge</strong><small id="health-text">Comprobando…</small></span></div>
+    </aside>
+	<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+
+    <main>
+      <header class="topbar"><button id="menu-button" class="icon-button menu-trigger" aria-label="Abrir menú"><span></span><span></span><span></span></button><div><span class="top-kicker">ACEBRIDGE CONTROL</span><h1 id="page-title">Resumen</h1><p id="page-subtitle">Estado general de tu televisión en directo</p></div><button id="refresh-button" class="button ghost refresh-action"><img src="/icons/refresh-cw.svg" alt="" aria-hidden="true"> Actualizar</button><button class="top-add-channel hidden" id="add-channel"><span>AÑADIR</span><small id="channel-count">— canales</small></button></header>
+
+      <section class="view active" id="view-overview">
+		<div class="welcome-card"><div class="welcome-copy"><span class="eyebrow">CENTRO DE CONTROL</span><h2>Tu televisión, bajo control.</h2><p>Organiza fuentes AceStream y entrega una señal limpia a Jellyfin desde un solo lugar.</p><div class="welcome-actions"><button class="button primary" data-open-source><span class="welcome-action-icon" aria-hidden="true"><span>+</span></span><span>Añadir contenido</span></button><button class="button soft" data-view="output"><span>Ver salida Jellyfin</span><span class="welcome-action-arrow" aria-hidden="true">→</span></button></div></div></div>
+        <div class="stats">
+          <article><img class="stat-icon" src="/icons/tv.svg" alt=""><div><span>Canales</span><strong id="stat-channels">—</strong><small>Total importados</small></div></article>
+          <article><img class="stat-icon" src="/icons/cast.svg" alt=""><div><span>Activos</span><strong id="stat-enabled">—</strong><small>En la salida M3U</small></div></article>
+          <article><img class="stat-icon" src="/icons/list-plus.svg" alt=""><div><span>Fuentes</span><strong id="stat-sources">—</strong><small>Listas configuradas</small></div></article>
+          <article><img class="stat-icon" src="/icons/layout-dashboard.svg" alt=""><div><span>Grupos</span><strong id="stat-groups">—</strong><small>Categorías detectadas</small></div></article>
+        </div>
+        <article class="system-strip">
+          <div class="system-strip-title"><strong>Sistema</strong></div>
+          <div class="system-service"><i class="status-ok"></i><span>Base de datos</span><small>Operativa</small></div>
+          <div class="system-service engine-service"><i id="engine-dot"></i><div><span>Ace Engine</span><small id="engine-label">Sin comprobar</small></div></div>
+          <button class="glass-pill" id="check-engine">Comprobar</button>
+        </article>
+        <div class="incident-center hidden" id="incident-center"><strong>Requiere atención</strong><span id="incident-text"></span></div>
+        <section class="quick-channels">
+          <div class="quick-heading"><div><span class="eyebrow">ACCESO RÁPIDO</span><h2>Canales disponibles</h2></div><button class="quick-all" data-view="channels">Ver todos <span aria-hidden="true">→</span></button></div>
+          <div class="quick-tools">
+            <label class="quick-search" for="quick-channel-search"><img src="/icons/search.svg" alt="" aria-hidden="true"><input id="quick-channel-search" type="search" placeholder="Buscar canal o grupo…" autocomplete="off"></label>
+            <div class="quick-tabs" aria-label="Filtrar canales"><button class="active" data-quick-mode="all">Todos</button><button data-quick-mode="recent">Recientes</button></div>
+          </div>
+          <div class="quick-grid" id="quick-channel-list"></div>
+          <div class="quick-empty hidden" id="quick-channels-empty"><span id="quick-empty-text">Aún no hay canales activos.</span><button data-view="channels">Gestionar canales</button></div>
+          <div class="quick-more-wrap"><button class="quick-more hidden" id="quick-load-more">Mostrar más</button></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-monitor">
+        <div class="monitor-summary">
+          <article><span class="monitor-icon"><img src="/icons/activity.svg" alt=""></span><div><small>AHORA MISMO</small><strong id="monitor-stream-count">—</strong><span>Streams activos</span></div></article>
+          <article><span class="monitor-icon"><img src="/icons/cast.svg" alt=""></span><div><small>ACE ENGINE</small><strong id="monitor-engine-state">—</strong><span id="monitor-engine-detail">Sin comprobar</span></div></article>
+          <article><span class="monitor-icon"><img src="/icons/list-plus.svg" alt=""></span><div><small>SINCRONIZACIÓN</small><strong id="monitor-sync-state">—</strong><span id="monitor-sync-detail">Sin actividad</span></div></article>
+          <article><span class="monitor-icon"><img src="/icons/tv.svg" alt=""></span><div><small>DIAGNÓSTICO</small><strong id="monitor-problem-count">—</strong><span>Canales con problemas</span></div></article>
+        </div>
+
+        <section class="monitor-panel monitor-streams-panel">
+          <header class="monitor-heading"><div><span class="eyebrow">SEÑAL EN DIRECTO</span><h2>Streams activos</h2><p id="monitor-idle-copy">Se liberan automáticamente tras 60 segundos sin actividad.</p></div><div class="monitor-live-control"><span><i></i>En tiempo real</span><button class="monitor-refresh" data-refresh-monitor><img src="/icons/refresh-cw.svg" alt="">Actualizar</button></div></header>
+          <div class="monitor-list" id="monitor-stream-list"></div>
+          <div class="monitor-empty" id="monitor-stream-empty"><span class="monitor-empty-icon"><img src="/icons/play.svg" alt=""></span><div><strong>No hay streams activos</strong><small>Cuando reproduzcas un canal aparecerá aquí.</small></div></div>
+        </section>
+
+        <div class="monitor-columns">
+          <section class="monitor-panel">
+            <header class="monitor-heading compact"><div><span class="eyebrow">FUENTES</span><h2>Sincronizaciones</h2></div><button class="monitor-link" data-view="sources">Ver fuentes <span>→</span></button></header>
+            <div class="monitor-list compact-list" id="monitor-job-list"></div>
+            <div class="monitor-empty compact" id="monitor-job-empty"><div><strong>Sin sincronizaciones</strong><small>Los próximos trabajos aparecerán aquí.</small></div></div>
+          </section>
+          <section class="monitor-panel">
+            <header class="monitor-heading compact"><div><span class="eyebrow">ACTIVIDAD</span><h2>Historial reciente</h2></div><button class="monitor-link" data-view="channels">Ver canales <span>→</span></button></header>
+            <div class="monitor-list compact-list" id="monitor-history-list"></div>
+            <div class="monitor-empty compact" id="monitor-history-empty"><div><strong>Aún no hay reproducciones</strong><small>Solo se guardan señales preparadas correctamente.</small></div></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-channels">
+        <div class="toolbar channel-pro-toolbar"><div class="channel-tools"><div class="search"><input id="channel-search" placeholder="Buscar por nombre o grupo"></div><select id="channel-group" aria-label="Filtrar por grupo"><option value="">Todos los grupos</option></select><select id="channel-status" aria-label="Filtrar por estado"><option value="">Todos los estados</option><option value="enabled">Activos</option><option value="disabled">Ocultos</option><option value="problem">Con problemas</option></select><select id="channel-order" aria-label="Ordenar canales"><option value="name">Nombre</option><option value="source">Fuente</option><option value="newest">Más recientes</option></select></div></div>
+        <div class="bulk-channel-bar hidden" id="bulk-channel-bar"><label><input id="select-page-channels" type="checkbox"><span id="selected-channel-count">0 seleccionados</span></label><div><button data-bulk-enabled="true">Activar</button><button data-bulk-enabled="false">Ocultar</button><select id="bulk-channel-group" aria-label="Nuevo grupo"><option value="">Cambiar grupo…</option></select><button data-bulk-diagnose>Comprobar señal</button><button class="bulk-clear" data-clear-selection>Cancelar</button></div></div>
+        <div class="panel table-panel"><div class="channel-table-head"><span>Canal</span><span>Grupo</span><span>Origen</span><span>Salida</span></div><div class="channel-list" id="channel-list"></div><div class="empty hidden" id="channels-empty"><h3>No hay canales</h3><p>Ajusta los filtros o añade una fuente para comenzar.</p></div><div class="channel-pagination" id="channel-pagination"><button id="channel-prev">Anterior</button><span id="channel-page-label">Página 1</span><button id="channel-next">Siguiente</button></div></div>
+      </section>
+
+      <section class="view" id="view-sources">
+        <div class="section-actions"><div><h2>Fuentes de canales</h2><p>Listas M3U o catálogos JSON que AceBridge sincroniza automáticamente.</p></div><button class="button primary" id="add-source">Añadir fuente</button></div>
+        <div class="source-grid" id="source-list"></div><div class="panel empty hidden" id="sources-empty"><span>⇣</span><h3>Aún no hay fuentes</h3><p>Añade una URL o sube un archivo M3U.</p><button class="button primary" data-open-source>Añadir primera fuente</button></div>
+      </section>
+
+      <section class="view" id="view-output">
+        <div class="panel narrow"><span class="eyebrow">SALIDA PRINCIPAL</span><h2>Playlist para Jellyfin</h2><p class="lead">Incluye los canales activos y entrega toda la señal mediante el proxy de AceBridge.</p><label>URL de la playlist</label><div class="copy-field"><input id="playlist-url" readonly><button class="button primary" id="copy-playlist">Copiar</button></div><div class="output-actions"><a class="button ghost" href="/playlist.m3u" target="_blank">Abrir M3U</a><a class="button ghost" href="/playlist.m3u" download>Descargar</a></div><div class="hint"><strong>En Jellyfin</strong><p>Panel de control → TV en directo → Proveedores de sintonización → M3U Tuner. Pega esta URL como ubicación del archivo.</p></div></div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <form class="panel narrow" id="settings-form"><div class="panel-heading"><div><h2>Conexión y operación</h2><p>Ajustes centrales de AceBridge.</p></div></div><label for="engine-url">URL de Ace Engine</label><input id="engine-url" type="url" required placeholder="http://192.168.1.50:6878"><small class="field-help">AceBridge conecta internamente el motor con Jellyfin.</small><label for="public-url">URL pública de AceBridge <em>Opcional</em></label><input id="public-url" type="url" placeholder="https://tv.example.com"><small class="field-help">Útil si accedes mediante un proxy inverso.</small><label for="update-interval">Intervalo de actualización</label><select id="update-interval"><option value="1">Cada hora</option><option value="4">Cada 4 horas</option><option value="12">Cada 12 horas</option><option value="24">Cada 24 horas</option></select><div class="settings-grid"><label>Streams simultáneos<input id="max-streams" type="number" min="1" max="32"></label><label>Inactividad (segundos)<input id="stream-idle" type="number" min="15" max="3600"></label><label>Historial (días)<input id="history-days" type="number" min="1" max="3650"></label></div><label class="check-row"><input id="diagnostics-enabled" type="checkbox"><span><strong>Diagnóstico automático</strong><small>Permitir comprobaciones programadas.</small></span></label><div class="form-actions"><button class="button primary" type="submit">Guardar cambios</button></div></form>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="source-dialog"><form class="dialog-card" id="source-form"><div class="dialog-heading"><div><h2>Añadir contenido</h2><p>Importa una lista o crea un canal AceStream.</p></div><button type="button" id="close-source" class="icon-button" aria-label="Cerrar">×</button></div><div class="tabs"><button type="button" class="tab active" data-source-tab="url">Desde URL</button><button type="button" class="tab" data-source-tab="file">Subir archivo</button><button type="button" class="tab" data-source-tab="manual">Canal manual</button><button type="button" class="tab" data-source-tab="redbull">Premier Padel</button></div><label for="source-name" id="source-name-label">Nombre de la fuente</label><input id="source-name" required maxlength="80" placeholder="Canales deportivos"><div id="source-url-fields"><label for="source-url">URL M3U o JSON</label><input id="source-url" type="url" placeholder="https://example.com/canales.json"><small class="field-help">AceBridge detecta automáticamente listas M3U y catálogos JSON con hashes AceStream.</small></div><div id="source-file-fields" class="hidden"><label for="source-file">Archivo M3U o JSON</label><input id="source-file" type="file" accept=".m3u,.m3u8,.json,audio/x-mpegurl,application/json"></div><div id="source-manual-fields" class="hidden"><label for="manual-ace-id">ID de AceStream</label><input id="manual-ace-id" maxlength="52" placeholder="0123456789abcdef…"><small class="field-help">Puedes pegar el ID de 40 caracteres o un enlace acestream:// completo.</small><label for="manual-group">Grupo <em>Opcional</em></label><input id="manual-group" maxlength="80" placeholder="Deportes"><label for="manual-logo">URL del logo <em>Opcional</em></label><input id="manual-logo" type="url" placeholder="https://example.com/logo.png"></div><div id="source-redbull-fields" class="source-special-info hidden"><strong>Red Bull Premier Padel</strong><p>AceBridge detectará el torneo vigente y añadirá solamente las pistas que estén emitiendo en directo. Los enlaces HLS se renuevan automáticamente.</p></div><div class="form-actions"><button type="button" class="button ghost" id="cancel-source">Cancelar</button><button type="submit" class="button primary" id="submit-source">Importar fuente</button></div></form></dialog>
+
+  <dialog id="channel-edit-dialog"><form class="dialog-card" id="channel-edit-form"><div class="dialog-heading"><div><h2>Editar canal</h2><p>Estos cambios se conservarán al sincronizar la fuente.</p></div><button type="button" class="icon-button" data-close-dialog="channel-edit-dialog" aria-label="Cerrar">×</button></div><input id="edit-channel-id" type="hidden"><label for="edit-channel-name">Nombre</label><input id="edit-channel-name" required maxlength="120"><div id="edit-channel-stream-wrap"><label for="edit-channel-ace-id">ID de AceStream</label><input id="edit-channel-ace-id" required maxlength="120"><small class="field-help">Admite el ID de 40 caracteres o un enlace acestream:// completo.</small></div><label for="edit-channel-group">Grupo</label><input id="edit-channel-group" maxlength="80"><label for="edit-channel-tvg-id">TVG ID <em>Opcional</em></label><input id="edit-channel-tvg-id" maxlength="120"><label for="edit-channel-logo">URL del logo <em>Opcional</em></label><input id="edit-channel-logo" type="url"><div class="form-actions"><button type="button" class="button ghost" data-close-dialog="channel-edit-dialog">Cancelar</button><button type="submit" class="button primary">Guardar canal</button></div></form></dialog>
+
+  <dialog id="source-edit-dialog"><form class="dialog-card" id="source-edit-form"><div class="dialog-heading"><div><h2>Editar fuente</h2><p>Actualiza su identidad y comportamiento.</p></div><button type="button" class="icon-button" data-close-dialog="source-edit-dialog" aria-label="Cerrar">×</button></div><input id="edit-source-id" type="hidden"><label for="edit-source-name">Nombre</label><input id="edit-source-name" required maxlength="80"><div id="edit-source-url-wrap"><label for="edit-source-url">URL de la lista</label><input id="edit-source-url" type="url"></div><label class="check-row"><input id="edit-source-enabled" type="checkbox"><span><strong>Fuente activa</strong><small>Permitir actualizaciones automáticas</small></span></label><div class="form-actions"><button type="button" class="button ghost" data-close-dialog="source-edit-dialog">Cancelar</button><button type="submit" class="button primary">Guardar fuente</button></div></form></dialog>
+  <dialog id="diagnostic-dialog"><div class="dialog-card"><div class="dialog-heading"><div><span class="eyebrow">DIAGNÓSTICO DE SEÑAL</span><h2 id="diagnostic-title">Canal</h2><p id="diagnostic-summary">Preparando comprobación…</p></div><button type="button" class="icon-button" data-close-dialog="diagnostic-dialog" aria-label="Cerrar">×</button></div><div class="diagnostic-result" id="diagnostic-result"></div><div class="form-actions"><button type="button" class="button ghost" data-close-dialog="diagnostic-dialog">Cerrar</button><button type="button" class="button primary" id="repeat-diagnostic">Repetir diagnóstico</button></div></div></dialog>
+  <dialog id="player-dialog" class="player-dialog"><div class="player-card"><div class="dialog-heading player-heading"><div><span class="eyebrow">PREVISUALIZACIÓN EN DIRECTO</span><h2 id="player-title">Canal</h2><p id="player-meta"></p></div><button type="button" class="icon-button" data-close-player aria-label="Cerrar reproductor">×</button></div><div class="video-shell"><video id="channel-player" controls playsinline></video><div class="player-status" id="player-status">Preparando señal…</div></div><div class="player-footer"><span>La señal se obtiene desde tu Ace Engine configurado.</span><a class="button ghost" id="open-stream" href="#" target="_blank" rel="noopener">Abrir stream</a></div></div></dialog>
+  <div id="toast" role="status"></div>
+  <script src="/vendor/hls.min.js"></script>
+  <script src="/app.js" defer></script>
+  <script src="/management-ui.js" defer></script>
+</body>
+</html>

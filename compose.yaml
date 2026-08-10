@@ -1,0 +1,24 @@
+services:
+  acebridge:
+    image: ${ACEBRIDGE_IMAGE:-ghcr.io/anubisreal/acebridge:latest}
+    container_name: acebridge
+    ports:
+      - "${ACEBRIDGE_PORT:-5023}:8080"
+    volumes:
+      - acebridge_data:/data
+    environment:
+      TZ: ${TZ:-Europe/Madrid}
+      ACEBRIDGE_ALLOW_PRIVATE_SOURCES: ${ACEBRIDGE_ALLOW_PRIVATE_SOURCES:-false}
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  acebridge_data:
+    name: ${ACEBRIDGE_VOLUME:-acebridge_data}
+    stop_grace_period: 15s

@@ -1,0 +1,5 @@
+# Puerto en el que escuchará AceBridge.
+ACEBRIDGE_LISTEN_ADDR=:8080
+
+# Actívalo solo para importar listas alojadas dentro de tu red local.
+ACEBRIDGE_ALLOW_PRIVATE_SOURCES=false
