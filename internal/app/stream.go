@@ -149,7 +149,7 @@ func (a *App) ensurePlaybackViewer(ctx context.Context, id int64, recordHistory 
 	a.metrics.engineRequests.Add(1)
 	a.metrics.engineLatencyMs.Add(uint64(time.Since(engineStarted).Milliseconds()))
 	if err != nil {
-		return playbackInfo{}, fmt.Errorf("Ace Engine did not start playback: %w", err)
+		return playbackInfo{}, fmt.Errorf("could not start Ace Engine playback: %w", err)
 	}
 	data, err := readLimitedBody(resp, 1<<20)
 	if err != nil {
@@ -163,7 +163,7 @@ func (a *App) ensurePlaybackViewer(ctx context.Context, id int64, recordHistory 
 		Error any `json:"error"`
 	}
 	if json.Unmarshal(data, &payload) != nil || payload.Response.PlaybackURL == "" {
-		return playbackInfo{}, errors.New("Ace Engine returned an invalid playback response")
+		return playbackInfo{}, errors.New("invalid playback response from Ace Engine")
 	}
 	playbackURL, err := engineResourceURL(engine, payload.Response.PlaybackURL)
 	if err != nil {
@@ -293,10 +293,6 @@ func (a *App) streamChannel(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, response.Body)
 }
 
-func rewriteManifest(manifest string, base *url.URL, channelID int64) string {
-	return rewriteManifestForViewer(manifest, base, channelID, "")
-}
-
 func rewriteManifestForViewer(manifest string, base *url.URL, channelID int64, viewerID string) string {
 	lines := strings.Split(manifest, "\n")
 	for index, line := range lines {
@@ -325,10 +321,6 @@ func resolveStreamURL(base *url.URL, raw string) string {
 		return raw
 	}
 	return base.ResolveReference(reference).String()
-}
-
-func streamProxyURL(channelID int64, target string) string {
-	return streamProxyURLForViewer(channelID, target, "")
 }
 
 func streamProxyURLForViewer(channelID int64, target, viewerID string) string {

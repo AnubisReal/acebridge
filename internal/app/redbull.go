@@ -52,7 +52,7 @@ func (a *App) redBullToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if session.Token == "" {
-		return "", errors.New("Red Bull TV returned an invalid session")
+		return "", errors.New("invalid Red Bull TV session")
 	}
 	return session.Token, nil
 }
@@ -60,14 +60,14 @@ func (a *App) redBullToken(ctx context.Context) (string, error) {
 func (a *App) fetchRedBullJSON(req *http.Request, target any) error {
 	response, err := a.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("Red Bull TV is not responding: %w", err)
+		return fmt.Errorf("request to Red Bull TV failed: %w", err)
 	}
 	data, err := readLimitedBody(response, 5<<20)
 	if err != nil {
 		return err
 	}
 	if err := json.Unmarshal(data, target); err != nil {
-		return errors.New("Red Bull TV returned invalid data")
+		return errors.New("invalid data returned by Red Bull TV")
 	}
 	return nil
 }

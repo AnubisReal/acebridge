@@ -143,14 +143,6 @@ func (m *streamManager) closeAll() {
 		m.stop(stream)
 	}
 }
-func (m *streamManager) touch(id int64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if s := m.items[id]; s != nil {
-		s.LastAccess = time.Now()
-	}
-}
-
 func (m *streamManager) touchViewer(id int64, viewerID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
