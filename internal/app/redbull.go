@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	redBullEventsURL = "https://www.redbull.tv/es_ES/events"
-	redBullAPIBase   = "https://api.redbull.tv/v3"
+	redBullEventsURL       = "https://www.redbull.tv/es_ES/events"
+	redBullAPIBase         = "https://api.redbull.tv/v3"
+	redBullPlaybackBaseURL = "https://play.redbull.com/main/v1/rbtv/es_ES/es/personal_computer/http"
+	redBullUserAgent       = "AceBridge/0.3"
 )
 
 var redBullEventIDPattern = regexp.MustCompile(`rrn:content:event-profiles:[0-9a-f-]{36}`)
@@ -47,7 +49,7 @@ type redBullCollection struct {
 
 func (a *App) redBullToken(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, redBullAPIBase+"/session?category=personal_computer&os_family=http&locale=es", nil)
-	req.Header.Set("User-Agent", "AceBridge/0.3")
+	req.Header.Set("User-Agent", redBullUserAgent)
 	var session redBullSession
 	if err := a.fetchRedBullJSON(req, &session); err != nil {
 		return "", err
@@ -77,7 +79,7 @@ func (a *App) redBullAPIGet(ctx context.Context, token, endpoint string, target 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, redBullAPIBase+endpoint, nil)
 	req.Header.Set("Authorization", token)
 	req.Header.Set("Accept-Language", "es-ES,es;q=0.9")
-	req.Header.Set("User-Agent", "AceBridge/0.3")
+	req.Header.Set("User-Agent", redBullUserAgent)
 	return a.fetchRedBullJSON(req, target)
 }
 
@@ -98,7 +100,7 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 		return product, "", errors.New("the Red Bull event has no live schedule")
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
-	req.Header.Set("User-Agent", "AceBridge/0.3")
+	req.Header.Set("User-Agent", redBullUserAgent)
 	response, err := a.sourceClient.Do(req)
 	if err != nil {
 		return redBullProduct{}, "", fmt.Errorf("cannot discover Premier Padel event: %w", err)
@@ -196,11 +198,7 @@ func (a *App) redBullPlaybackURL(ctx context.Context, rrn string) (string, error
 	if !strings.HasPrefix(rrn, "rrn:content:live-videos:") {
 		return "", errors.New("invalid Red Bull TV stream identifier")
 	}
-	token, err := a.redBullToken(ctx)
-	if err != nil {
-		return "", err
-	}
-	return "https://dms.redbull.tv/v3/" + url.PathEscape(rrn) + "/" + url.PathEscape(token) + "/playlist.m3u8", nil
+	return redBullPlaybackBaseURL + "/" + url.PathEscape(rrn) + ".m3u8?device_group=group_5", nil
 }
 
 func allowedRedBullStreamURL(target *url.URL) bool {
@@ -208,5 +206,5 @@ func allowedRedBullStreamURL(target *url.URL) bool {
 		return false
 	}
 	host := strings.ToLower(target.Hostname())
-	return host == "dms.redbull.tv" || host == "rbmn-live.akamaized.net"
+	return host == "play.redbull.com" || host == "rbmn-live.akamaized.net"
 }

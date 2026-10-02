@@ -246,7 +246,11 @@ func (a *App) streamChannel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid stream resource")
 		return
 	}
-	request.Header.Set("User-Agent", "AceBridge/0.1")
+	if sourceKind == "redbull_padel" {
+		request.Header.Set("User-Agent", redBullUserAgent)
+	} else {
+		request.Header.Set("User-Agent", "AceBridge/0.1")
+	}
 	request.Header.Set("Accept", r.Header.Get("Accept"))
 	if value := r.Header.Get("Range"); value != "" {
 		request.Header.Set("Range", value)
