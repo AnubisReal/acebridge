@@ -32,6 +32,7 @@ type redBullProduct struct {
 	Playable    bool   `json:"playable"`
 	Status      struct {
 		Code      string `json:"code"`
+		Play      string `json:"play"`
 		StartTime string `json:"start_time"`
 		EndTime   string `json:"end_time"`
 	} `json:"status"`
@@ -86,6 +87,9 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 		if err := a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(match), &product); err != nil {
 			return product, "", err
 		}
+		if redBullLiveVideoID(product) != "" {
+			return product, "", nil
+		}
 		for _, collection := range product.Collections {
 			if strings.HasSuffix(collection.ID, ":live_programs") {
 				return product, collection.ID, nil
@@ -117,6 +121,9 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 		if a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(id), &product) != nil || !strings.EqualFold(product.Title, "Premier Padel") {
 			continue
 		}
+		if redBullLiveVideoID(product) != "" {
+			return product, "", nil
+		}
 		for _, collection := range product.Collections {
 			if strings.HasSuffix(collection.ID, ":live_programs") {
 				if product.Status.Code == "live" {
@@ -134,6 +141,13 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 	return redBullProduct{}, "", errors.New("no current Premier Padel event was found")
 }
 
+func redBullLiveVideoID(product redBullProduct) string {
+	if product.Status.Code != "live" || !strings.HasPrefix(product.Status.Play, "rrn:content:live-videos:") {
+		return ""
+	}
+	return product.Status.Play
+}
+
 func (a *App) fetchRedBullPadelChannels(ctx context.Context, sourceURL string) ([]playlist.Channel, error) {
 	token, err := a.redBullToken(ctx)
 	if err != nil {
@@ -143,13 +157,25 @@ func (a *App) fetchRedBullPadelChannels(ctx context.Context, sourceURL string) (
 	if err != nil {
 		return nil, err
 	}
-	var collection redBullCollection
-	if err := a.redBullAPIGet(ctx, token, "/collections/"+url.PathEscape(collectionID), &collection); err != nil {
-		return nil, err
-	}
 	group := strings.TrimSpace(event.Title)
 	if group == "" {
 		group = "Premier Padel"
+	}
+	if liveVideoID := redBullLiveVideoID(event); liveVideoID != "" {
+		name := strings.TrimSpace(event.Subheading)
+		if name == "" {
+			name = group + " en directo"
+		}
+		logoID := event.ID
+		if logoID == "" {
+			logoID = liveVideoID
+		}
+		logo := "https://resources.redbull.tv/" + logoID + "/rbtv_display_art_square/f_webp,c_fill,w_512,h_512,q_80?namespace=rbtv&refresh=true"
+		return []playlist.Channel{{TVGID: liveVideoID, Name: name, Group: group, Logo: logo, AceStreamID: liveVideoID}}, nil
+	}
+	var collection redBullCollection
+	if err := a.redBullAPIGet(ctx, token, "/collections/"+url.PathEscape(collectionID), &collection); err != nil {
+		return nil, err
 	}
 	channels := make([]playlist.Channel, 0, len(collection.Items))
 	for _, item := range collection.Items {
