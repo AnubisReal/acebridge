@@ -43,6 +43,10 @@ type App struct {
 	metrics      metricsState
 	limiter      *rateLimiter
 	logoCatalog  logoCatalogCache
+	streamKey    string
+	proxyMu      sync.Mutex
+	proxyClients map[string]*http.Client
+	epg          epgCache
 }
 
 func New(cfg Config, logger *slog.Logger) (*App, error) {
@@ -53,6 +57,7 @@ func New(cfg Config, logger *slog.Logger) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{cfg: cfg, db: db, logger: logger, client: newSafeHTTPClient(true), sourceClient: newSafeHTTPClient(cfg.AllowPrivateSources), cancel: cancel}
 	a.streams = newStreamManager(a)
+	a.streamKey = newViewerID()
 	a.limiter = newRateLimiter()
 	a.wg.Add(1)
 	go a.runScheduler(ctx)
@@ -64,6 +69,13 @@ func New(cfg Config, logger *slog.Logger) (*App, error) {
 func (a *App) Close() error {
 	a.cancel()
 	a.wg.Wait()
+	a.proxyMu.Lock()
+	for _, client := range a.proxyClients {
+		client.CloseIdleConnections()
+	}
+	a.proxyMu.Unlock()
+	a.sourceClient.CloseIdleConnections()
+	a.client.CloseIdleConnections()
 	return a.db.Close()
 }
 
@@ -102,6 +114,10 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/v1/settings", a.putSettings)
 	mux.HandleFunc("POST /api/v1/engine/check", a.checkEngine)
 	mux.HandleFunc("GET /playlist.m3u", a.playlist)
+	mux.HandleFunc("GET /api/v1/epg", a.getEPG)
+	mux.HandleFunc("PUT /api/v1/epg", a.putEPG)
+	mux.HandleFunc("POST /api/v1/epg/refresh", a.refreshEPG)
+	mux.HandleFunc("GET /epg.xml", a.serveEPG)
 
 	webFS, _ := fs.Sub(embeddedWeb, "web")
 	mux.Handle("/", http.FileServer(http.FS(webFS)))

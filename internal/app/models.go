@@ -7,6 +7,7 @@ type Source struct {
 	Name         string     `json:"name"`
 	Kind         string     `json:"kind"`
 	URL          string     `json:"url,omitempty"`
+	ProxyURL     string     `json:"proxy_url,omitempty"`
 	Enabled      bool       `json:"enabled"`
 	ChannelCount int        `json:"channel_count"`
 	LastStatus   string     `json:"last_status"`

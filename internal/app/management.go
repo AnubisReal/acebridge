@@ -121,8 +121,8 @@ func (a *App) diagnoseChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	started := time.Now()
-	var aceID, logo string
-	if err := a.db.QueryRowContext(r.Context(), `SELECT acestream_id,logo FROM channels WHERE id=?`, id).Scan(&aceID, &logo); err != nil {
+	var aceID, logo, sourceKind, proxyURL string
+	if err := a.db.QueryRowContext(r.Context(), `SELECT c.acestream_id,c.logo,s.kind,s.proxy_url FROM channels c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, id).Scan(&aceID, &logo, &sourceKind, &proxyURL); err != nil {
 		writeError(w, 404, "channel not found")
 		return
 	}
@@ -132,7 +132,7 @@ func (a *App) diagnoseChannel(w http.ResponseWriter, r *http.Request) {
 	bitrate, duplicates := 0, 0
 	logoAccessible := true
 	_ = a.db.QueryRowContext(r.Context(), `SELECT COUNT(*)-1 FROM channels WHERE acestream_id=?`, aceID).Scan(&duplicates)
-	if playlist.ExtractAceStreamID(aceID) == "" {
+	if playlist.ExtractAceStreamID(aceID) == "" && !isDirectStream(aceID) && sourceKind != "redbull_padel" {
 		status = "error"
 		message = "invalid AceStream ID"
 	}
@@ -146,15 +146,29 @@ func (a *App) diagnoseChannel(w http.ResponseWriter, r *http.Request) {
 				defer a.streams.release(id)
 			}
 			manifestRequest, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, info.PlaybackURL, nil)
-			response, manifestErr := a.client.Do(manifestRequest)
+			client := a.client
+			if isDirectStream(aceID) {
+				var clientErr error
+				client, clientErr = a.sourceHTTPClient(proxyURL)
+				if clientErr != nil {
+					writeError(w, 400, clientErr.Error())
+					return
+				}
+			}
+			response, manifestErr := client.Do(manifestRequest)
 			if manifestErr != nil {
 				status, message = "error", "manifest unavailable: "+manifestErr.Error()
 			} else {
-				data, readErr := readLimitedBody(response, maxManifestSize)
-				if readErr != nil || !strings.Contains(string(data), "#EXTM3U") {
-					status, message = "error", "invalid HLS manifest"
+				mediaType := strings.ToLower(response.Header.Get("Content-Type"))
+				if isDirectStream(aceID) && (strings.HasPrefix(mediaType, "video/mp2t") || strings.HasPrefix(mediaType, "video/mp4") || strings.HasPrefix(mediaType, "video/webm")) {
+					response.Body.Close()
 				} else {
-					resolution, codecs, bitrate = manifestDetails(string(data))
+					data, readErr := readLimitedBody(response, maxManifestSize)
+					if readErr != nil || !strings.Contains(string(data), "#EXTM3U") {
+						status, message = "error", "invalid HLS manifest"
+					} else {
+						resolution, codecs, bitrate = manifestDetails(string(data))
+					}
 				}
 			}
 		}

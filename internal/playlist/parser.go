@@ -78,6 +78,9 @@ func parseM3U(content string) []Channel {
 		if id := ExtractAceStreamID(line); id != "" {
 			pending.AceStreamID = id
 			channels = append(channels, *pending)
+		} else if parsed, err := url.Parse(line); err == nil && parsed.Hostname() != "" && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+			pending.AceStreamID = parsed.String()
+			channels = append(channels, *pending)
 		}
 		pending = nil
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/anubisreal/acebridge/internal/playlist"
 )
 
-const sourceColumns = `id,name,kind,url,enabled,channel_count,last_status,last_error,last_sync_at,created_at`
+const sourceColumns = `id,name,kind,url,proxy_url,enabled,channel_count,last_status,last_error,last_sync_at,created_at`
 
 func (a *App) health(w http.ResponseWriter, _ *http.Request) {
 	if err := a.db.Ping(); err != nil {
@@ -73,6 +73,8 @@ WHERE `+baseWhere+` ORDER BY `+orderBy+` LIMIT ? OFFSET ?`, append(args, limit, 
 		item.Enabled = enabled == 1
 		if item.SourceKind == "redbull_padel" {
 			item.StreamType = "hls"
+		} else if isDirectStream(item.AceStreamID) {
+			item.StreamType = directStreamType(item.AceStreamID)
 		} else {
 			item.StreamType = "acestream"
 		}
@@ -144,7 +146,7 @@ func (a *App) updateChannel(w http.ResponseWriter, r *http.Request) {
 	if input.Logo != nil {
 		channel.Logo = strings.TrimSpace(*input.Logo)
 	}
-	if input.AceStreamID != nil && channel.SourceKind != "redbull_padel" {
+	if input.AceStreamID != nil && channel.SourceKind != "redbull_padel" && !isDirectStream(channel.AceStreamID) {
 		channel.AceStreamID = playlist.ExtractAceStreamID(strings.TrimSpace(*input.AceStreamID))
 		if channel.AceStreamID == "" {
 			writeError(w, 400, "a valid 40-character AceStream ID is required")
@@ -218,9 +220,10 @@ func (a *App) updateSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name    *string `json:"name,omitempty"`
-		URL     *string `json:"url,omitempty"`
-		Enabled *bool   `json:"enabled,omitempty"`
+		Name     *string `json:"name,omitempty"`
+		URL      *string `json:"url,omitempty"`
+		ProxyURL *string `json:"proxy_url,omitempty"`
+		Enabled  *bool   `json:"enabled,omitempty"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -254,11 +257,23 @@ func (a *App) updateSource(w http.ResponseWriter, r *http.Request) {
 		}
 		source.URL = candidate
 	}
+	if input.ProxyURL != nil {
+		if source.Kind != "url" {
+			writeError(w, 400, "only URL sources can use a proxy")
+			return
+		}
+		proxyURL, proxyErr := normalizeSourceProxyURL(*input.ProxyURL)
+		if proxyErr != nil {
+			writeError(w, 400, proxyErr.Error())
+			return
+		}
+		source.ProxyURL = proxyURL
+	}
 	if source.Name == "" {
 		writeError(w, 400, "source name is required")
 		return
 	}
-	_, err = a.db.ExecContext(r.Context(), `UPDATE sources SET name=?,url=?,enabled=? WHERE id=?`, source.Name, source.URL, source.Enabled, id)
+	_, err = a.db.ExecContext(r.Context(), `UPDATE sources SET name=?,url=?,proxy_url=?,enabled=?,etag=CASE WHEN url<>? OR proxy_url<>? THEN '' ELSE etag END,last_modified=CASE WHEN url<>? OR proxy_url<>? THEN '' ELSE last_modified END WHERE id=?`, source.Name, source.URL, source.ProxyURL, source.Enabled, source.URL, source.ProxyURL, source.URL, source.ProxyURL, id)
 	if err != nil {
 		writeError(w, 500, "cannot update source")
 		return
@@ -363,8 +378,9 @@ func (a *App) listSources(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) createURLSource(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
+		Name     string `json:"name"`
+		URL      string `json:"url"`
+		ProxyURL string `json:"proxy_url"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -376,7 +392,12 @@ func (a *App) createURLSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "name and a valid HTTP URL are required")
 		return
 	}
-	result, err := a.db.ExecContext(r.Context(), `INSERT INTO sources(name,kind,url) VALUES (?, 'url', ?)`, input.Name, input.URL)
+	proxyURL, err := normalizeSourceProxyURL(input.ProxyURL)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	result, err := a.db.ExecContext(r.Context(), `INSERT INTO sources(name,kind,url,proxy_url) VALUES (?, 'url', ?, ?)`, input.Name, input.URL, proxyURL)
 	if err != nil {
 		writeError(w, 500, "cannot create source")
 		return

@@ -40,7 +40,7 @@ func migrate(db *sql.DB) error {
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (
  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, kind TEXT NOT NULL,
- url TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+ url TEXT NOT NULL DEFAULT '', proxy_url TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
  channel_count INTEGER NOT NULL DEFAULT 0, last_status TEXT NOT NULL DEFAULT 'pending',
  last_error TEXT NOT NULL DEFAULT '', last_sync_at DATETIME, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS channel_diagnostics (
 	if err := ensureColumn(tx, "sources", "last_modified", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(tx, "sources", "proxy_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(tx, "channels", "source_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE channels SET source_acestream_id=acestream_id WHERE source_acestream_id=''; INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (1,CURRENT_TIMESTAMP),(2,CURRENT_TIMESTAMP)`); err != nil {
 		return err
 	}
@@ -132,7 +138,7 @@ func scanSource(scanner interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var enabled int
 	var lastSync sql.NullTime
-	err := scanner.Scan(&source.ID, &source.Name, &source.Kind, &source.URL, &enabled, &source.ChannelCount, &source.LastStatus, &source.LastError, &lastSync, &source.CreatedAt)
+	err := scanner.Scan(&source.ID, &source.Name, &source.Kind, &source.URL, &source.ProxyURL, &enabled, &source.ChannelCount, &source.LastStatus, &source.LastError, &lastSync, &source.CreatedAt)
 	source.Enabled = enabled == 1
 	if lastSync.Valid {
 		t := lastSync.Time

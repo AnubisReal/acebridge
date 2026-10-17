@@ -60,8 +60,8 @@ func (a *App) startSyncJob(ctx context.Context, sourceID int64, status string) (
 
 func (a *App) runSyncJob(ctx context.Context, id, jobID int64) error {
 	fail := func(syncErr error) error { a.finishSyncJob(ctx, jobID, 0, 0, 0, syncErr.Error()); return syncErr }
-	var kind, sourceURL, etag, lastModified string
-	if err := a.db.QueryRowContext(ctx, `SELECT kind,url,etag,last_modified FROM sources WHERE id=?`, id).Scan(&kind, &sourceURL, &etag, &lastModified); err != nil {
+	var kind, sourceURL, proxyURL, etag, lastModified string
+	if err := a.db.QueryRowContext(ctx, `SELECT kind,url,proxy_url,etag,last_modified FROM sources WHERE id=?`, id).Scan(&kind, &sourceURL, &proxyURL, &etag, &lastModified); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fail(errors.New("source not found"))
 		}
@@ -100,7 +100,7 @@ func (a *App) runSyncJob(ctx context.Context, id, jobID int64) error {
 	if lastModified != "" {
 		request.Header.Set("If-Modified-Since", lastModified)
 	}
-	response, err := a.fetchSourceWithRetry(request)
+	response, err := a.fetchSourceWithRetry(request, proxyURL)
 	if err != nil {
 		a.markSourceError(ctx, id, err)
 		return fail(fmt.Errorf("cannot download source: %w", err))
@@ -118,7 +118,7 @@ func (a *App) runSyncJob(ctx context.Context, id, jobID int64) error {
 	}
 	channels := playlist.Parse(string(data))
 	if len(channels) == 0 {
-		err = errors.New("no AceStream channels found")
+		err = errors.New("no supported AceStream or HTTP IPTV channels found")
 		a.markSourceError(ctx, id, err)
 		return fail(err)
 	}
@@ -151,7 +151,11 @@ func normalizeSourceFetchURL(raw string) (string, error) {
 	return resolved.String(), nil
 }
 
-func (a *App) fetchSourceWithRetry(request *http.Request) (*http.Response, error) {
+func (a *App) fetchSourceWithRetry(request *http.Request, proxyURL string) (*http.Response, error) {
+	client, err := a.sourceHTTPClient(proxyURL)
+	if err != nil {
+		return nil, err
+	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
@@ -163,7 +167,7 @@ func (a *App) fetchSourceWithRetry(request *http.Request) (*http.Response, error
 			case <-timer.C:
 			}
 		}
-		response, err := a.sourceClient.Do(request.Clone(request.Context()))
+		response, err := client.Do(request.Clone(request.Context()))
 		if err == nil {
 			if response.StatusCode < 500 || attempt == 2 {
 				return response, nil
@@ -188,15 +192,28 @@ func (a *App) finishSyncJob(ctx context.Context, id int64, added, updated, remov
 
 func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []playlist.Channel) (added, updated, removed int, err error) {
 	a.enrichChannelLogos(ctx, channels, true)
+	identityCounts := make(map[string]int)
+	for _, channel := range channels {
+		identityCounts[channelIdentity(channel)]++
+	}
 	err = withTx(ctx, a.db, func(tx *sql.Tx) error {
 		type previousChannel struct {
 			id                       int64
 			enabled, locked          bool
 			tvgID, name, group, logo string
 			aceStreamID              string
+			sourceKey                string
 		}
 		existing := make(map[string]previousChannel)
-		rows, err := tx.QueryContext(ctx, `SELECT id,source_acestream_id,enabled,metadata_locked,tvg_id,name,group_name,logo,acestream_id FROM channels WHERE source_id=?`, sourceID)
+		byIdentity := make(map[string][]previousChannel)
+		byEndpoint := make(map[string][]previousChannel)
+		endpointCounts := make(map[string]int)
+		for _, channel := range channels {
+			if isDirectStream(channel.AceStreamID) {
+				endpointCounts[channelEndpoint(channel.AceStreamID)]++
+			}
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id,source_acestream_id,enabled,metadata_locked,tvg_id,name,group_name,logo,acestream_id,source_key FROM channels WHERE source_id=?`, sourceID)
 		if err != nil {
 			return err
 		}
@@ -204,24 +221,46 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 			var id string
 			var enabled, locked int
 			var previous previousChannel
-			if rows.Scan(&previous.id, &id, &enabled, &locked, &previous.tvgID, &previous.name, &previous.group, &previous.logo, &previous.aceStreamID) == nil {
+			if rows.Scan(&previous.id, &id, &enabled, &locked, &previous.tvgID, &previous.name, &previous.group, &previous.logo, &previous.aceStreamID, &previous.sourceKey) == nil {
 				previous.enabled = enabled == 1
 				previous.locked = locked == 1
 				existing[id] = previous
+				if previous.sourceKey == "" {
+					previous.sourceKey = channelIdentity(playlist.Channel{TVGID: previous.tvgID, Name: previous.name, Group: previous.group, AceStreamID: id})
+				}
+				byIdentity[previous.sourceKey] = append(byIdentity[previous.sourceKey], previous)
+				if isDirectStream(id) {
+					byEndpoint[channelEndpoint(id)] = append(byEndpoint[channelEndpoint(id)], previous)
+				}
 			}
 		}
 		rows.Close()
 		seen := make(map[string]struct{})
+		retained := make(map[int64]bool)
 		count := 0
 		for _, channel := range channels {
 			sourceAceStreamID := channel.AceStreamID
+			sourceKey := channelIdentity(channel)
 			if _, ok := seen[channel.AceStreamID]; ok {
 				continue
 			}
 			seen[channel.AceStreamID] = struct{}{}
 			enabled := true
 			locked := false
-			if value, ok := existing[channel.AceStreamID]; ok {
+			value, ok := existing[channel.AceStreamID]
+			if !ok && isDirectStream(channel.AceStreamID) && identityCounts[sourceKey] == 1 && len(byIdentity[sourceKey]) == 1 {
+				value = byIdentity[sourceKey][0]
+				ok = !retained[value.id]
+			}
+			if !ok && isDirectStream(channel.AceStreamID) {
+				endpoint := channelEndpoint(channel.AceStreamID)
+				if endpointCounts[endpoint] == 1 && len(byEndpoint[endpoint]) == 1 {
+					value = byEndpoint[endpoint][0]
+					ok = !retained[value.id]
+				}
+			}
+			if ok && !retained[value.id] {
+				retained[value.id] = true
 				enabled = value.enabled
 				locked = value.locked
 				if value.locked {
@@ -229,12 +268,14 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 					channel.Name = value.name
 					channel.Group = value.group
 					channel.Logo = value.logo
-					channel.AceStreamID = value.aceStreamID
+					if !isDirectStream(sourceAceStreamID) {
+						channel.AceStreamID = value.aceStreamID
+					}
 				}
-				_, err = tx.ExecContext(ctx, `UPDATE channels SET tvg_id=?,name=?,group_name=?,logo=?,acestream_id=?,enabled=?,metadata_locked=? WHERE id=?`, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, enabled, locked, value.id)
+				_, err = tx.ExecContext(ctx, `UPDATE channels SET tvg_id=?,name=?,group_name=?,logo=?,acestream_id=?,source_acestream_id=?,source_key=?,enabled=?,metadata_locked=? WHERE id=?`, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, sourceKey, enabled, locked, value.id)
 				updated++
 			} else {
-				_, err = tx.ExecContext(ctx, `INSERT INTO channels(source_id,tvg_id,name,group_name,logo,acestream_id,source_acestream_id,enabled,metadata_locked) VALUES (?,?,?,?,?,?,?,?,?)`, sourceID, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, enabled, locked)
+				_, err = tx.ExecContext(ctx, `INSERT INTO channels(source_id,tvg_id,name,group_name,logo,acestream_id,source_acestream_id,source_key,enabled,metadata_locked) VALUES (?,?,?,?,?,?,?,?,?,?)`, sourceID, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, sourceKey, enabled, locked)
 				added++
 			}
 			if err != nil {
@@ -242,8 +283,8 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 			}
 			count++
 		}
-		for sourceIDKey, previous := range existing {
-			if _, ok := seen[sourceIDKey]; !ok {
+		for _, previous := range existing {
+			if !retained[previous.id] {
 				if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, previous.id); err != nil {
 					return err
 				}
@@ -254,6 +295,28 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 		return err
 	})
 	return
+}
+
+// tvg-id is provider metadata, not an HLS standard. Only unambiguous matches
+// may carry settings across an IPTV URL rotation; duplicate renditions stay separate.
+func channelIdentity(channel playlist.Channel) string {
+	if !isDirectStream(channel.AceStreamID) {
+		return "ace:" + channel.AceStreamID
+	}
+	if channel.TVGID != "" {
+		return "iptv:id:" + channel.TVGID
+	}
+	return "iptv:name:" + strings.ToLower(strings.TrimSpace(channel.Name)) + "\x00" + strings.ToLower(strings.TrimSpace(channel.Group))
+}
+
+func channelEndpoint(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func (a *App) markSourceError(ctx context.Context, id int64, syncErr error) {

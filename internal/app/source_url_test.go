@@ -18,3 +18,24 @@ func TestNormalizeRegularSourceURLUnchanged(t *testing.T) {
 		t.Fatalf("got %q (%v), want unchanged", got, err)
 	}
 }
+
+func TestNormalizeSourceProxyURL(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"192.168.0.70:1080", "socks5://192.168.0.70:1080"},
+		{"socks5://warp.local:1080", "socks5://warp.local:1080"},
+		{"http://proxy.local:3128", "http://proxy.local:3128"},
+		{"", ""},
+	}
+	for _, test := range tests {
+		got, err := normalizeSourceProxyURL(test.input)
+		if err != nil || got != test.want {
+			t.Fatalf("normalizeSourceProxyURL(%q) = %q, %v", test.input, got, err)
+		}
+	}
+	if _, err := normalizeSourceProxyURL("ftp://proxy.local:21"); err == nil {
+		t.Fatal("unsupported proxy scheme was accepted")
+	}
+}

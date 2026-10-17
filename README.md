@@ -4,9 +4,27 @@
 
 # AceBridge
 
-AceBridge administra listas M3U, TXT y catálogos JSON con canales AceStream, detecta emisiones de Premier Padel y genera una salida HLS estable para Jellyfin. La reproducción integrada y la playlist utilizan el proxy de AceBridge, por lo que Jellyfin no necesita conectarse directamente a Ace Engine.
+AceBridge administra canales AceStream y listas IPTV M3U con enlaces HTTP/HLS, como TDTChannels, detecta emisiones de Premier Padel y genera una salida para Jellyfin. Los canales IPTV se reproducen directamente a través de AceBridge sin necesitar Ace Engine.
+
+Al crear o editar una fuente URL puedes activar «Usar túnel/proxy para esta fuente». Introduce una IP o dominio con puerto, por ejemplo `192.168.0.70:1080` (SOCKS5), o una dirección `socks5://`, `http://` o `https://`. En IPTV, tanto la descarga de la lista como los manifiestos HLS, segmentos y claves pasan por ese proxy. Jellyfin y el reproductor integrado utilizan la URL de AceBridge. Las fuentes AceStream siguen utilizando Ace Engine para el vídeo.
+
+Los destinos se resuelven y validan en AceBridge antes de conectar; el túnel recibe la IP validada para impedir cambios de DNS entre validación y conexión. Las redirecciones pasan por la misma política. Se bloquean loopback, link-local, metadatos y rangos especiales; las redes privadas requieren `ACEBRIDGE_ALLOW_PRIVATE_SOURCES=true`. Esta restricción se aplica a los destinos de las listas, no a la dirección del proxy WARP configurado. Los proxies HTTP/HTTPS deben admitir CONNECT a los puertos de destino.
+
+El reproductor identifica HLS y vídeo MP4/WebM. Las señales MPEG-TS continuas se sirven sin límite total de duración y pueden abrirse con VLC/Jellyfin; el navegador muestra esa indicación. Las conexiones mantienen límites de establecimiento, TLS, cabeceras e inactividad. La sincronización conserva el ID y las personalizaciones mediante `tvg-id` o nombre/grupo cuando la coincidencia es inequívoca, y reconoce cambios de token en una misma dirección. Ante variantes ambiguas no fusiona canales automáticamente.
+
+Referencias de implementación: [Go net/http](https://pkg.go.dev/net/http), [HLS — RFC 8216](https://datatracker.ietf.org/doc/html/rfc8216), [prevención SSRF de OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html) y [rangos especiales de IANA](https://www.iana.org/assignments/iana-ipv4-special-registry/).
 
 AceBridge está diseñado como servicio local monousuario. No incluye cuentas, contraseñas ni roles.
+
+## EPG independiente
+
+En **Salida Jellyfin → Guía EPG independiente**, activa la guía, introduce una URL XML/XML.gz y, si lo necesitas, activa su propio túnel. Para TDTChannels: `https://www.tdtchannels.com/epg/TV.xml.gz`, con `192.168.0.70:1080` como proxy WARP. Guarda y pulsa **Actualizar ahora** para comprobarla. Añade `https://tu-dominio/epg.xml` como proveedor XMLTV en Jellyfin.
+
+La configuración se conserva en la base de datos. La caché vive en memoria, dura 6 horas por defecto y se renueva bajo demanda al solicitar la guía; también admite actualización manual. Al reiniciar se vuelve a descargar. Se aceptan XML y gzip, se comprueba la integridad gzip y que el XML tenga una única raíz `tv`, y se eliminan DTD e instrucciones de presentación externas. Los límites son 16 MiB de descarga y 64 MiB descomprimidos. Los identificadores XMLTV no se reescriben y no se modifica ninguna fuente ni playlist de canales.
+
+Si falla una actualización automática, se puede entregar la última guía válida durante un máximo de 24 horas desde la última descarga correcta, indicándolo en `X-AceBridge-EPG-Cache: stale`; se reintenta como máximo una vez por minuto. Sin una guía válida se devuelve un error HTTP 502. La actualización manual muestra el error sin sustituir la caché. Las respuestas admiten ETag/304. El túnel utiliza la misma validación de destinos y redirecciones que las fuentes IPTV.
+
+Referencias: [XMLTV](https://github.com/XMLTV/xmltv/blob/master/xmltv.dtd), [gzip de Go](https://pkg.go.dev/compress/gzip) y [XML de Go](https://pkg.go.dev/encoding/xml). La comprobación de XML es de estructura y sintaxis; no realiza validación completa contra una DTD ni descarga recursos externos.
 
 ## Inicio rápido con Docker Compose
 
