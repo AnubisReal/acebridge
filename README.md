@@ -145,7 +145,7 @@ Esta excepción no es necesaria para Ace Engine.
 
 ## Desarrollo local
 
-Requisitos: Go 1.26 o posterior.
+Requisitos: Go 1.26.9 o posterior.
 
 ```bash
 go run ./cmd/acebridge
