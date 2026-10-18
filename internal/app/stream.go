@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -452,22 +453,40 @@ func (a *App) streamChannel(w http.ResponseWriter, r *http.Request) {
 
 func rewriteManifestForViewer(manifest string, base *url.URL, channelID int64, viewerID string) string {
 	lines := strings.Split(manifest, "\n")
+	nextPlaylist := false
 	for index, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "#") {
+			if strings.HasPrefix(trimmed, "#EXT-X-STREAM-INF:") {
+				nextPlaylist = true
+			}
+			fallback := ".m3u8"
+			switch {
+			case strings.HasPrefix(trimmed, "#EXT-X-KEY:"), strings.HasPrefix(trimmed, "#EXT-X-SESSION-KEY:"):
+				fallback = ".key"
+			case strings.HasPrefix(trimmed, "#EXT-X-MAP:"):
+				fallback = ".mp4"
+			case strings.HasPrefix(trimmed, "#EXT-X-PART:"), strings.HasPrefix(trimmed, "#EXT-X-PRELOAD-HINT:"):
+				fallback = ".m4s"
+			}
 			lines[index] = manifestURIAttribute.ReplaceAllStringFunc(line, func(match string) string {
 				parts := manifestURIAttribute.FindStringSubmatch(match)
 				if len(parts) != 2 {
 					return match
 				}
-				return `URI="` + streamProxyURLForViewer(channelID, resolveStreamURL(base, parts[1]), viewerID) + `"`
+				return `URI="` + streamProxyURLForResource(channelID, resolveStreamURL(base, parts[1]), viewerID, fallback) + `"`
 			})
 			continue
 		}
-		lines[index] = streamProxyURLForViewer(channelID, resolveStreamURL(base, trimmed), viewerID)
+		fallback := ".ts"
+		if nextPlaylist {
+			fallback = ".m3u8"
+		}
+		lines[index] = streamProxyURLForResource(channelID, resolveStreamURL(base, trimmed), viewerID, fallback)
+		nextPlaylist = false
 	}
 	return strings.Join(lines, "\n")
 }
@@ -481,7 +500,25 @@ func resolveStreamURL(base *url.URL, raw string) string {
 }
 
 func streamProxyURLForViewer(channelID int64, target, viewerID string) string {
-	result := fmt.Sprintf("/api/v1/channels/%d/stream?url=%s", channelID, url.QueryEscape(target))
+	return streamProxyURLForResource(channelID, target, viewerID, ".m3u8")
+}
+
+// A suffix in the URL path is required by FFmpeg's HLS extension checks.
+// The cosmetic resource name never controls the upstream request; the original
+// URL (including its query) remains the signed and validated source of truth.
+func streamProxyURLForResource(channelID int64, target, viewerID, fallback string) string {
+	extension := fallback
+	if parsed, err := url.Parse(target); err == nil {
+		switch ext := strings.ToLower(path.Ext(parsed.Path)); ext {
+		case ".m3u8", ".ts", ".m4s", ".mp4", ".aac", ".m4a", ".mp3", ".ac3", ".eac3", ".vtt", ".webvtt", ".key", ".webm", ".mpg", ".mpeg", ".mpegts", ".m4v", ".mov", ".wav", ".flac", ".ogg", ".oga", ".ogv", ".3gp", ".mkv", ".vob", ".mp2":
+			extension = ext
+		case ".cmfv", ".cmfa":
+			extension = ".m4s"
+		case ".m3u":
+			extension = ".m3u8"
+		}
+	}
+	result := fmt.Sprintf("/api/v1/channels/%d/stream/resource%s?url=%s", channelID, extension, url.QueryEscape(target))
 	if viewerID != "" {
 		result += "&viewer=" + url.QueryEscape(viewerID)
 	}

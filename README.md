@@ -109,6 +109,8 @@ La etiqueta `v1.0.0` publica `1.0.0`, `1.0`, `1` y `sha-*`. Las imágenes incluy
 
 ## Jellyfin
 
+Los recursos HLS del proxy conservan extensiones de medios en la ruta (`.m3u8`, `.ts`, `.m4s`, `.mp4`, `.vtt`) para que FFmpeg/FFprobe pueda leerlos con sus comprobaciones de seguridad predeterminadas. Las URLs originales y sus parámetros siguen firmados y validados. La URL de la playlist y el endpoint antiguo `/api/v1/channels/{id}/stream` mantienen compatibilidad. AceBridge no recodifica la señal; Jellyfin decide entre reproducción directa, remux y transcodificación según el cliente y sus políticas.
+
 En Jellyfin abre **Panel de control → TV en directo → Proveedores de sintonización → M3U Tuner**.
 
 Si Jellyfin comparte la red Docker utiliza:

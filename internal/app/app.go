@@ -97,6 +97,7 @@ func (a *App) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/channels/{id}/viewers/{viewer}/heartbeat", a.heartbeatViewer)
 	mux.HandleFunc("DELETE /api/v1/channels/{id}/viewers/{viewer}", a.closeViewer)
 	mux.HandleFunc("GET /api/v1/channels/{id}/stream", a.streamChannel)
+	mux.HandleFunc("GET /api/v1/channels/{id}/stream/{resource}", a.streamChannel)
 	mux.HandleFunc("GET /api/v1/sources", a.listSources)
 	mux.HandleFunc("GET /api/v1/sync-jobs", a.listSyncJobs)
 	mux.HandleFunc("GET /api/v1/sync-jobs/{id}", a.getSyncJob)

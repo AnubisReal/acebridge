@@ -291,7 +291,7 @@ func TestChannelStreamProxiesAndRewritesHLS(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("stream status %d: %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), "/api/v1/channels/1/stream?url=") || !strings.Contains(response.Body.String(), "segment-1.ts") {
+	if !strings.Contains(response.Body.String(), "/api/v1/channels/1/stream/resource.ts?url=") || !strings.Contains(response.Body.String(), "segment-1.ts") {
 		t.Fatalf("manifest was not rewritten: %s", response.Body.String())
 	}
 }
@@ -325,7 +325,7 @@ func TestStartChannelPlaybackUsesEnginePlaybackURL(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["playback_url"] != "http://127.0.0.1:6878/ace/m/hash/session.m3u8" || !strings.Contains(result["proxy_url"], "/api/v1/channels/1/stream?url=") {
+	if result["playback_url"] != "http://127.0.0.1:6878/ace/m/hash/session.m3u8" || !strings.Contains(result["proxy_url"], "/api/v1/channels/1/stream/resource.m3u8?url=") {
 		t.Fatalf("unexpected playback result: %#v", result)
 	}
 }
