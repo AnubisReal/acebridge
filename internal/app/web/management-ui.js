@@ -1,15 +1,14 @@
-const channelUI={page:0,limit:50,total:0,query:'',group:'',status:'',order:'name',selected:new Set(),loading:false,diagnosticID:null,searchTimer:null};
+const channelUI={page:0,limit:50,total:0,query:'',group:'',status:'',order:'name',selected:new Set(),loading:false,requestID:0,controller:null,diagnosticID:null,searchTimer:null};
 
-async function managedChannelRequest(){
+async function managedChannelRequest(signal){
   const params=new URLSearchParams({limit:String(channelUI.limit),offset:String(channelUI.page*channelUI.limit),order:channelUI.order});
   if(channelUI.query)params.set('q',channelUI.query);
   if(channelUI.group)params.set('group',channelUI.group);
   if(channelUI.status)params.set('status',channelUI.status);
-  const response=await fetch(`${api}/channels?${params}`);
+  const response=await fetch(`${api}/channels?${params}`,{signal});
   const data=await response.json().catch(()=>[]);
   if(!response.ok)throw new Error(data.error||`Error ${response.status}`);
-  channelUI.total=Number(response.headers.get('X-Total-Count'))||0;
-  return data;
+  return {channels:data,total:Number(response.headers.get('X-Total-Count'))||0};
 }
 
 async function managedLoadGroups(){
@@ -23,17 +22,26 @@ async function managedLoadGroups(){
 }
 
 async function managedLoadChannels(){
-  if(channelUI.loading)return;
+  const requestID=++channelUI.requestID;
+  channelUI.controller?.abort();
+  const controller=new AbortController();
+  channelUI.controller=controller;
   channelUI.loading=true;
   $('#channel-list').classList.add('is-loading');
   try{
-    const channels=await managedChannelRequest();
+    const {channels,total}=await managedChannelRequest(controller.signal);
+    if(requestID!==channelUI.requestID)return;
+    channelUI.total=total;
     state.channels=channels;
     if(channelUI.page>0&&channels.length===0){channelUI.page--;channelUI.loading=false;return managedLoadChannels()}
     managedRenderChannels();
+  }catch(error){
+    if(error.name!=='AbortError'&&requestID===channelUI.requestID)toast(error.message,true);
   }finally{
-    channelUI.loading=false;
-    $('#channel-list').classList.remove('is-loading');
+    if(requestID===channelUI.requestID){
+      channelUI.loading=false;
+      $('#channel-list').classList.remove('is-loading');
+    }
   }
 }
 

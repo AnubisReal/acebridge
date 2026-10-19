@@ -166,11 +166,26 @@ func (m *streamManager) removeViewer(id int64, viewerID string) {
 	if viewerID == "" {
 		return
 	}
+	// Serialize final teardown with playback startup for this channel. Otherwise
+	// an old engine stop command could stop a newly created session.
+	lock := m.channelLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var stopped *managedStream
 	if stream := m.items[id]; stream != nil {
-		delete(stream.viewerActivity, viewerID)
-		stream.Viewers = len(stream.viewerActivity)
+		if _, exists := stream.viewerActivity[viewerID]; exists {
+			delete(stream.viewerActivity, viewerID)
+			stream.Viewers = len(stream.viewerActivity)
+			if stream.Viewers == 0 {
+				delete(m.items, id)
+				stopped = stream
+			}
+		}
+	}
+	m.mu.Unlock()
+	if stopped != nil {
+		m.stop(stopped)
 	}
 }
 

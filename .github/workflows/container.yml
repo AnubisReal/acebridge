@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   test:
-    name: Go quality checks
+    name: Application quality checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,6 +24,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Frontend regression tests
+        run: node --test scripts/workspace.test.cjs
       - name: Verify formatting
         run: test -z "$(gofmt -l .)"
       - name: Vet
@@ -69,6 +74,11 @@ jobs:
           docker logs acebridge-test
           docker inspect acebridge-test
           exit 1
+      - name: Verify embedded interface assets
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8080/workspace.css | grep -F '.overview-workspace' >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8080/workspace.js | grep -F 'refreshOverview' >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8080/icons/copy.svg | grep -F '<svg' >/dev/null
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:

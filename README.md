@@ -6,7 +6,7 @@
 
 AceBridge administra canales AceStream y listas IPTV M3U con enlaces HTTP/HLS, como TDTChannels, detecta emisiones de Premier Padel y genera una salida para Jellyfin. Los canales IPTV se reproducen directamente a través de AceBridge sin necesitar Ace Engine.
 
-Al crear o editar una fuente URL puedes activar «Usar túnel/proxy para esta fuente». Introduce una IP o dominio con puerto, por ejemplo `192.168.0.70:1080` (SOCKS5), o una dirección `socks5://`, `http://` o `https://`. En IPTV, tanto la descarga de la lista como los manifiestos HLS, segmentos y claves pasan por ese proxy. Jellyfin y el reproductor integrado utilizan la URL de AceBridge. Las fuentes AceStream siguen utilizando Ace Engine para el vídeo.
+Al crear o editar una fuente URL puedes activar «Usar túnel/proxy para esta fuente». Introduce una IP o dominio con puerto, por ejemplo `192.0.2.10:1080` (SOCKS5), o una dirección `socks5://`, `http://` o `https://`. En IPTV, tanto la descarga de la lista como los manifiestos HLS, segmentos y claves pasan por ese proxy. Jellyfin y el reproductor integrado utilizan la URL de AceBridge. Las fuentes AceStream siguen utilizando Ace Engine para el vídeo.
 
 Los destinos se resuelven y validan en AceBridge antes de conectar; el túnel recibe la IP validada para impedir cambios de DNS entre validación y conexión. Las redirecciones pasan por la misma política. Se bloquean loopback, link-local, metadatos y rangos especiales; las redes privadas requieren `ACEBRIDGE_ALLOW_PRIVATE_SOURCES=true`. Esta restricción se aplica a los destinos de las listas, no a la dirección del proxy WARP configurado. Los proxies HTTP/HTTPS deben admitir CONNECT a los puertos de destino.
 
@@ -16,9 +16,20 @@ Referencias de implementación: [Go net/http](https://pkg.go.dev/net/http), [HLS
 
 AceBridge está diseñado como servicio local monousuario. No incluye cuentas, contraseñas ni roles.
 
+## Interfaz
+
+![Resumen de AceBridge en escritorio, con identidades anonimizadas](docs/screenshots/overview-desktop-private.png)
+
+<details>
+<summary>Ver la interfaz móvil</summary>
+<p><img src="docs/screenshots/overview-mobile-private.png" alt="AceBridge en móvil, con logos e identidades desenfocados" width="300"></p>
+</details>
+
+Capturas editadas para proteger la privacidad: logos e identidades de canales y fuentes desenfocados, cifras ocultas y dirección de salida sustituida por un dominio de ejemplo. No se publican las capturas originales ni configuraciones privadas. Las ediciones de imagen pueden introducir pequeñas diferencias tipográficas respecto a la aplicación.
+
 ## EPG independiente
 
-En **Salida Jellyfin → Guía EPG independiente**, activa la guía, introduce una URL XML/XML.gz y, si lo necesitas, activa su propio túnel. Para TDTChannels: `https://www.tdtchannels.com/epg/TV.xml.gz`, con `192.168.0.70:1080` como proxy WARP. Guarda y pulsa **Actualizar ahora** para comprobarla. Añade `https://tu-dominio/epg.xml` como proveedor XMLTV en Jellyfin.
+En **Salida Jellyfin → Guía EPG independiente**, activa la guía, introduce una URL XML/XML.gz y, si lo necesitas, activa su propio túnel. Para TDTChannels: `https://www.tdtchannels.com/epg/TV.xml.gz`, con `192.0.2.10:1080` como proxy WARP. Guarda y pulsa **Actualizar ahora** para comprobarla. Añade `https://tu-dominio/epg.xml` como proveedor XMLTV en Jellyfin.
 
 La configuración se conserva en la base de datos. La caché vive en memoria, dura 6 horas por defecto y se renueva bajo demanda al solicitar la guía; también admite actualización manual. Al reiniciar se vuelve a descargar. Se aceptan XML y gzip, se comprueba la integridad gzip y que el XML tenga una única raíz `tv`, y se eliminan DTD e instrucciones de presentación externas. Los límites son 16 MiB de descarga y 64 MiB descomprimidos. Los identificadores XMLTV no se reescriben y no se modifica ninguna fuente ni playlist de canales.
 
@@ -94,7 +105,7 @@ Para despliegues controlados es preferible fijar una versión, por ejemplo `ghcr
 
 1. Crea en GitHub un repositorio llamado `acebridge` bajo la cuenta `anubisreal`.
 2. Sube el proyecto a la rama `main`.
-3. GitHub Actions ejecutará formato, `go vet`, pruebas con detector de carreras, cobertura, Staticcheck, Govulncheck, arranque del contenedor y Trivy.
+3. GitHub Actions ejecutará formato, `go vet`, pruebas con detector de carreras, once regresiones JavaScript de interfaz, cobertura, Staticcheck, Govulncheck, arranque del contenedor y Trivy.
 4. Si todo termina correctamente, se publicarán imágenes `linux/amd64` y `linux/arm64` en `ghcr.io/anubisreal/acebridge`.
 5. En la primera publicación abre **Packages → acebridge → Package settings** y cambia la visibilidad a pública si deseas que el stack descargue la imagen sin credenciales.
 
@@ -169,6 +180,14 @@ Comprobaciones locales:
 make check
 make image
 ```
+
+Las regresiones de la interfaz se pueden comprobar con Node.js, sin instalar paquetes:
+
+```bash
+node --test scripts/workspace.test.cjs
+```
+
+Consulta [la revisión del rediseño](docs/ui-redesign-audit.md) para el punto de retorno y el alcance de las pruebas de escritorio y móvil.
 
 El binario también admite:
 
