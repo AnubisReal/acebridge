@@ -32,6 +32,7 @@
 
   function syncNavigation() {
     const view = document.querySelector('.view.active')?.id.replace('view-', '') || 'overview';
+    document.body.classList.toggle('overview-minimal', view === 'overview');
     document.querySelectorAll('#navigation [data-view], .workspace-rail [data-view]').forEach(button => {
       const selected = button.dataset.view === view;
       button.classList.toggle('active', selected);
@@ -47,6 +48,38 @@
   window.addEventListener('hashchange', syncNavigation);
   document.addEventListener('acebridge:viewchange', syncNavigation);
   syncNavigation();
+
+  // Measure actual chrome height rather than guessing at header wrapping or zoom.
+  const overview = document.querySelector('#view-overview');
+  let overviewLayoutFrame = 0;
+  function fitOverviewViewport() {
+    cancelAnimationFrame(overviewLayoutFrame);
+    overviewLayoutFrame = requestAnimationFrame(() => {
+      if (!overview.classList.contains('active')) return;
+      const offset = `${Math.ceil(overview.getBoundingClientRect().top + window.scrollY)}px`;
+      if (overview.style.getPropertyValue('--overview-offset') !== offset) {
+        overview.style.setProperty('--overview-offset', offset);
+      }
+    });
+  }
+  window.addEventListener('resize', fitOverviewViewport);
+  document.addEventListener('acebridge:viewchange', fitOverviewViewport);
+  const chromeObserver = new ResizeObserver(fitOverviewViewport);
+  chromeObserver.observe(document.querySelector('.topbar'));
+  chromeObserver.observe(document.querySelector('.sidebar'));
+  document.fonts.ready.then(fitOverviewViewport);
+  fitOverviewViewport();
+
+  const systemStatus = document.querySelector('.system-status');
+  document.addEventListener('click', event => {
+    if (!systemStatus.contains(event.target)) systemStatus.open = false;
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && systemStatus.open) {
+      systemStatus.open = false;
+      systemStatus.querySelector('summary').focus();
+    }
+  });
 
   function decorateChannels() {
     document.querySelectorAll('#quick-channel-list .quick-channel').forEach(button => {
@@ -70,6 +103,29 @@
   catalogObserver.observe(document.querySelector('#quick-channel-list'), {childList:true});
   catalogObserver.observe(document.querySelector('#source-list'), {childList:true});
   decorateChannels();
+
+  // Fetch the next page near the end of the active scroll pane (or document on mobile).
+  const catalogPane = document.querySelector('.quick-catalog-scroll');
+  const channelPane = document.querySelector('.quick-channels');
+  let catalogScrollFrame = 0;
+  function checkCatalogEnd() {
+    cancelAnimationFrame(catalogScrollFrame);
+    catalogScrollFrame = requestAnimationFrame(() => {
+      if (document.hidden || !overview.classList.contains('active') || state.quickLoading || state.quickFilterPending || state.quickLoadError || state.quickChannels.length >= state.quickTotal) return;
+      const pane = getComputedStyle(catalogPane).overflowY === 'auto' ? catalogPane : getComputedStyle(channelPane).overflowY === 'auto' ? channelPane : null;
+      const bounds = pane ? pane.getBoundingClientRect() : {top:0,bottom:window.innerHeight};
+      const grid = document.querySelector('#quick-channel-list').getBoundingClientRect();
+      if (bounds.bottom <= 0 || bounds.top >= window.innerHeight || grid.bottom > Math.min(bounds.bottom, window.innerHeight) + 300) return;
+      loadQuickChannels(true).catch(error => toast(error.message, true));
+    });
+  }
+  function onCatalogScroll() { state.quickLoadError = false; checkCatalogEnd(); }
+  catalogPane.addEventListener('scroll', onCatalogScroll, {passive:true});
+  channelPane.addEventListener('scroll', onCatalogScroll, {passive:true});
+  window.addEventListener('scroll', onCatalogScroll, {passive:true});
+  window.addEventListener('resize', checkCatalogEnd);
+  document.addEventListener('acebridge:catalogloaded', checkCatalogEnd);
+  document.addEventListener('acebridge:viewchange', checkCatalogEnd);
 
   let refreshing = false;
   async function refreshOverview() {

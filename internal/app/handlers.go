@@ -55,7 +55,7 @@ func (a *App) listChannels(w http.ResponseWriter, r *http.Request) {
 	var total int
 	_ = a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM channels c JOIN sources s ON s.id=c.source_id WHERE `+baseWhere, args...).Scan(&total)
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
-	rows, err := a.db.QueryContext(r.Context(), `SELECT c.id,c.source_id,s.name,s.kind,c.tvg_id,c.name,c.group_name,c.logo,c.acestream_id,c.enabled
+	rows, err := a.db.QueryContext(r.Context(), `SELECT c.id,c.source_id,s.name,s.kind,c.tvg_id,c.name,c.group_name,c.logo,c.acestream_id,c.enabled,c.broadcast_state
 FROM channels c JOIN sources s ON s.id=c.source_id
 WHERE `+baseWhere+` ORDER BY `+orderBy+` LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
@@ -67,7 +67,7 @@ WHERE `+baseWhere+` ORDER BY `+orderBy+` LIMIT ? OFFSET ?`, append(args, limit, 
 	for rows.Next() {
 		var item Channel
 		var enabled int
-		if err := rows.Scan(&item.ID, &item.SourceID, &item.SourceName, &item.SourceKind, &item.TVGID, &item.Name, &item.Group, &item.Logo, &item.AceStreamID, &enabled); err != nil {
+		if err := rows.Scan(&item.ID, &item.SourceID, &item.SourceName, &item.SourceKind, &item.TVGID, &item.Name, &item.Group, &item.Logo, &item.AceStreamID, &enabled, &item.BroadcastState); err != nil {
 			continue
 		}
 		item.Enabled = enabled == 1
@@ -120,7 +120,7 @@ func (a *App) updateChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	var channel Channel
 	var enabled int
-	err = a.db.QueryRowContext(r.Context(), `SELECT c.id,c.source_id,s.name,s.kind,c.tvg_id,c.name,c.group_name,c.logo,c.acestream_id,c.enabled FROM channels c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, id).Scan(&channel.ID, &channel.SourceID, &channel.SourceName, &channel.SourceKind, &channel.TVGID, &channel.Name, &channel.Group, &channel.Logo, &channel.AceStreamID, &enabled)
+	err = a.db.QueryRowContext(r.Context(), `SELECT c.id,c.source_id,s.name,s.kind,c.tvg_id,c.name,c.group_name,c.logo,c.acestream_id,c.enabled,c.broadcast_state FROM channels c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, id).Scan(&channel.ID, &channel.SourceID, &channel.SourceName, &channel.SourceKind, &channel.TVGID, &channel.Name, &channel.Group, &channel.Logo, &channel.AceStreamID, &enabled, &channel.BroadcastState)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, 404, "channel not found")
 		return
@@ -348,10 +348,10 @@ func (a *App) createManualChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := a.db.QueryRowContext(r.Context(), `SELECT c.id,c.source_id,s.name,s.kind,c.tvg_id,c.name,c.group_name,c.logo,c.acestream_id,c.enabled FROM channels c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, channelID)
+	row := a.db.QueryRowContext(r.Context(), `SELECT c.id,c.source_id,s.name,s.kind,c.tvg_id,c.name,c.group_name,c.logo,c.acestream_id,c.enabled,c.broadcast_state FROM channels c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, channelID)
 	var channel Channel
 	var enabled int
-	if err := row.Scan(&channel.ID, &channel.SourceID, &channel.SourceName, &channel.SourceKind, &channel.TVGID, &channel.Name, &channel.Group, &channel.Logo, &channel.AceStreamID, &enabled); err != nil {
+	if err := row.Scan(&channel.ID, &channel.SourceID, &channel.SourceName, &channel.SourceKind, &channel.TVGID, &channel.Name, &channel.Group, &channel.Logo, &channel.AceStreamID, &enabled, &channel.BroadcastState); err != nil {
 		writeError(w, http.StatusInternalServerError, "channel was created but could not be loaded")
 		return
 	}

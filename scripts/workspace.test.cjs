@@ -7,6 +7,141 @@ const vm = require('node:vm');
 const web = path.join(__dirname, '../internal/app/web');
 const app = fs.readFileSync(path.join(web, 'app.js'), 'utf8');
 
+test('output and settings controls use themed styling without replacing semantic inputs', () => {
+  const css=fs.readFileSync(path.join(web,'workspace.css'),'utf8');
+  const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  assert.match(css, /#view-output button,#view-settings button,#view-output select,#view-settings select\{-webkit-appearance:none;appearance:none/);
+  assert.match(css, /input\[type=checkbox\]::before/);
+  assert.match(css, /input:checked::before\{visibility:visible\}/);
+  for(const id of ['epg-enabled','epg-use-proxy','diagnostics-enabled'])assert.match(html,new RegExp(`id="${id}" type="checkbox"`));
+});
+
+test('output and settings forms share their main frame without nested white cards', () => {
+  const css=fs.readFileSync(path.join(web,'workspace.css'),'utf8');
+  assert.match(css, /#view-output>\.panel,#view-settings>\.panel\{background:transparent;border:0;border-radius:0;box-shadow:none;padding:0/);
+  assert.match(css, /#view-output\.active\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(0,1\.15fr\)/);
+  assert.match(css, /#view-output \.check-row,#view-settings \.check-row\{background:transparent/);
+});
+
+test('channel hover uses an icon instead of text squeezed into the group column', () => {
+  const managed=fs.readFileSync(path.join(web,'management-ui.js'),'utf8');
+  const css=fs.readFileSync(path.join(web,'workspace.css'),'utf8');
+  for(const source of [app,managed]){
+    assert.doesNotMatch(source, /class="play-hint">Reproducir/);
+    assert.match(source, /class="play-hint" aria-hidden="true"><img src="\/icons\/play.svg"/);
+  }
+  assert.match(css, /column-gap:24px/);
+  assert.match(css, /\.channel-copy\{flex:1;min-width:0\}/);
+  assert.match(managed, /broadcastLabel\(channel,'Disponible'\)/);
+});
+
+test('overview controls span both columns before catalog and inspector', () => {
+  const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  const controls=html.indexOf('<div class="overview-controls">');
+  const workspace=html.indexOf('<div class="overview-workspace">');
+  assert.ok(controls>0&&workspace>controls);
+  assert.doesNotMatch(html, /<h2>Canales disponibles<\/h2>/);
+  assert.ok(html.indexOf('class="quick-tools"',controls)<workspace);
+  assert.ok(html.indexOf('class="quick-catalog-scroll"')>workspace);
+  assert.doesNotMatch(html, /TU BIBLIOTECA/);
+});
+
+test('system health lives in one compact header disclosure, not a catalog footer', () => {
+  const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  assert.match(html, /<details class="sidebar-status system-status">/);
+  const summary=html.match(/<summary aria-label="Estado del sistema y Ace Engine">([\s\S]*?)<\/summary>/)[1];
+  assert.doesNotMatch(summary, /Sin comprobar|id="engine-label"|id="health-text"/);
+  assert.match(summary, /<small>Sistema<\/small>/);
+  assert.match(summary, /<small>Engine<\/small>/);
+  assert.doesNotMatch(html, /class="system-strip"/);
+  for(const id of ['health-dot','health-text','engine-dot','engine-label','database-status','check-engine']){
+    assert.equal((html.match(new RegExp(`id="${id}"`,'g'))||[]).length,1,`${id} must remain unique`);
+  }
+  assert.match(app, /\$\('#database-status'\)\.textContent='Operativa'/);
+  assert.match(app, /\$\('#database-status'\)\.textContent='Sin conexión'/);
+});
+
+test('desktop catalog has a viewport bound and a keyboard-accessible internal scroller', () => {
+  const css=fs.readFileSync(path.join(web,'workspace.css'),'utf8');
+  const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
+  const workspace=fs.readFileSync(path.join(web,'workspace.js'),'utf8');
+  assert.match(css, /height:calc\(100dvh - var\(--overview-offset,220px\) - 24px\)/);
+  assert.match(css, /\.quick-catalog-scroll\{flex:1;min-height:0;overflow:auto/);
+  assert.match(css, /grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(app, /quickLimit:60/);
+  assert.match(app, /loadQuickChannels\(append=false\)/);
+  assert.doesNotMatch(html, /id="quick-load-more"|class="quick-all"/);
+  assert.match(css, /scrollbar-width:none/);
+  assert.doesNotMatch(app, /quickLimit(?::|=)12/);
+  assert.match(html, /class="quick-catalog-scroll" tabindex="0" role="region" aria-label="Catálogo de canales"/);
+  assert.match(workspace, /getBoundingClientRect\(\)\.top \+ window.scrollY/);
+  assert.match(workspace, /new ResizeObserver\(fitOverviewViewport\)/);
+});
+
+test('lazy catalog appends offset pages, avoids duplicates and stops on an empty page', async () => {
+  const source=app.match(/^async function loadQuickChannels\(append=false\)\{[\s\S]*?^\}/m)?.[0];
+  assert.ok(source);
+  const calls=[];const pages=[[{id:1},{id:2}],[{id:2},{id:3}],[]];
+  const scope={api:'/api/v1',state:{quickRequest:0,quickChannels:[],quickTotal:0,quickLimit:60,quickMode:'all',quickQuery:''},renderQuickChannels(){},document:{dispatchEvent(){}},Event:class{},fetch:async url=>{calls.push(url);return {ok:true,headers:{get:()=> '100'},json:async()=>pages.shift()}}};
+  vm.createContext(scope);vm.runInContext(source,scope);
+  await scope.loadQuickChannels();assert.match(calls[0],/limit=60&offset=0/);
+  await scope.loadQuickChannels(true);assert.match(calls[1],/offset=2/);
+  assert.deepEqual(Array.from(scope.state.quickChannels,c=>c.id),[1,2,3]);
+  await scope.loadQuickChannels(true);assert.equal(scope.state.quickTotal,3);
+  await scope.loadQuickChannels(true);assert.equal(calls.length,3);
+  assert.equal(scope.state.quickLoading,false);
+});
+
+test('lazy catalog retains loaded channels on failure and blocks overlapping/filter-pending loads', async () => {
+  const source=app.match(/^async function loadQuickChannels\(append=false\)\{[\s\S]*?^\}/m)[0];
+  let calls=0;
+  const scope={api:'/api/v1',state:{quickRequest:0,quickChannels:[{id:1}],quickTotal:100,quickLimit:60,quickMode:'all',quickQuery:'',quickLoading:true},renderQuickChannels(){},document:{dispatchEvent(){}},Event:class{},fetch:async()=>{calls++;throw new Error('offline')}};
+  vm.createContext(scope);vm.runInContext(source,scope);
+  await scope.loadQuickChannels(true);assert.equal(calls,0);
+  scope.state.quickLoading=false;scope.state.quickFilterPending=true;
+  await scope.loadQuickChannels(true);assert.equal(calls,0);
+  scope.state.quickFilterPending=false;
+  await assert.rejects(scope.loadQuickChannels(true),/offline/);
+  assert.equal(scope.state.quickChannels.length,1);assert.equal(scope.state.quickLoadError,true);assert.equal(scope.state.quickLoading,false);
+});
+
+test('source sync labels separate work in progress, idle and real errors', () => {
+  const source = ['sourceSyncRunning','sourceSyncLabel'].map(name=>app.match(new RegExp(`^function ${name}[^\\n]+`,'m'))?.[0]).join('\n');
+  const scope={};vm.createContext(scope);vm.runInContext(source,scope);
+  assert.equal(scope.sourceSyncLabel({id:1,last_status:'error'},[{source_id:1,status:'running'}]),'● Sincronizando…');
+  assert.equal(scope.sourceSyncLabel({id:1,last_status:'idle'},[]),'● Sin emisiones disponibles');
+  assert.equal(scope.sourceSyncLabel({id:1,last_status:'error'},[]),'● Error');
+  assert.equal(scope.sourceSyncRunning(1,[{source_id:2,status:'running'}]),false);
+});
+
+test('sync completion automatically refreshes channels, overview and source state', async () => {
+  const source=app.match(/^async function refreshSourceSync\(\)\{[\s\S]*?^\}/m)?.[0];
+  assert.ok(source);
+  let jobs=[{id:1,status:'running'}];const calls=[];
+  const scope={state:{},document:{hidden:false},api:'/api/v1',console,request:async()=>jobs};
+  for(const name of ['loadSources','loadChannels','loadQuickChannels','loadDashboard'])scope[name]=async()=>{calls.push(name)};
+  vm.createContext(scope);vm.runInContext(source,scope);
+  await scope.refreshSourceSync();assert.equal(calls.length,4);
+  await scope.refreshSourceSync();assert.equal(calls.length,4,'unchanged state must not reload the UI');
+  jobs=[{id:1,status:'completed'}];await scope.refreshSourceSync();assert.equal(calls.length,8);
+  assert.equal(scope.state.syncPolling,false);
+  scope.document.hidden=true;jobs=[{id:2,status:'running'}];await scope.refreshSourceSync();assert.equal(calls.length,8);
+  scope.document.hidden=false;scope.state.syncPolling=true;await scope.refreshSourceSync();assert.equal(calls.length,8);
+});
+
+test('broadcast state distinguishes a replay from a live channel without marking an error', () => {
+  const source = app.match(/^function broadcastLabel[^\n]+/m)?.[0];
+  assert.ok(source);
+  const scope = {};
+  vm.createContext(scope);
+  vm.runInContext(source, scope);
+  assert.equal(scope.broadcastLabel({broadcast_state:'live'}, 'Disponible'), 'En directo');
+  assert.equal(scope.broadcastLabel({broadcast_state:'replay'}, 'Disponible'), 'Repetición disponible');
+  assert.equal(scope.broadcastLabel({}, 'Disponible'), 'Disponible');
+  assert.match(app, /broadcastLabel\(c,'Disponible'\)/);
+  assert.match(app, /broadcastLabel\(channel,channel.group/);
+});
+
 test('escaped provider data is safe in text and quoted HTML attributes', () => {
   const source = app.match(/^function escapeHTML[^\n]+/m)?.[0];
   assert.ok(source, 'escapeHTML must remain testable');

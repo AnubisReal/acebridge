@@ -8,19 +8,24 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/anubisreal/acebridge/internal/playlist"
 )
 
 const (
 	redBullEventsURL       = "https://www.redbull.tv/es_ES/events"
+	redBullPadelURL        = "https://www.redbull.tv/es_ES/partner-channel/rrn:content:tv-partner-channels:7bbfd0ef-86fd-40fd-be46-f245c351b77a"
 	redBullAPIBase         = "https://api.redbull.tv/v3"
 	redBullPlaybackBaseURL = "https://play.redbull.com/main/v1/rbtv/es_ES/es/personal_computer/http"
 	redBullUserAgent       = "AceBridge/0.3"
 )
 
 var redBullEventIDPattern = regexp.MustCompile(`rrn:content:event-profiles:[0-9a-f-]{36}`)
+
+var errNoRedBullEvent = errors.New("no playable Premier Padel event was found")
 
 type redBullSession struct {
 	Token string `json:"token"`
@@ -89,7 +94,7 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 		if err := a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(match), &product); err != nil {
 			return product, "", err
 		}
-		if redBullLiveVideoID(product) != "" {
+		if redBullLiveVideoID(product) != "" || redBullReplayVideoID(product) != "" {
 			return product, "", nil
 		}
 		for _, collection := range product.Collections {
@@ -97,22 +102,20 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 				return product, collection.ID, nil
 			}
 		}
-		return product, "", errors.New("the Red Bull event has no live schedule")
+		return product, "", errNoRedBullEvent
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
-	req.Header.Set("User-Agent", redBullUserAgent)
-	response, err := a.sourceClient.Do(req)
-	if err != nil {
-		return redBullProduct{}, "", fmt.Errorf("cannot discover Premier Padel event: %w", err)
-	}
-	body, err := readLimitedBody(response, 8<<20)
+	page, err := a.redBullCatalogPage(ctx, sourceURL)
 	if err != nil {
 		return redBullProduct{}, "", err
 	}
-	page := string(body)
 	seen := map[string]bool{}
 	var fallbackProduct redBullProduct
 	var fallbackCollection string
+	var replays []redBullProduct
+	var lookupErrors []error
+	if !redBullEventIDPattern.MatchString(page) {
+		return redBullProduct{}, "", errors.New("catalog returned by Red Bull contains no recognizable events")
+	}
 	for _, location := range redBullEventIDPattern.FindAllStringIndex(page, -1) {
 		id := page[location[0]:location[1]]
 		if seen[id] {
@@ -120,11 +123,18 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 		}
 		seen[id] = true
 		var product redBullProduct
-		if a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(id), &product) != nil || !strings.EqualFold(product.Title, "Premier Padel") {
+		if err := a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(id), &product); err != nil {
+			lookupErrors = append(lookupErrors, err)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(strings.Join(strings.Fields(product.Title), " ")), "premier padel") {
 			continue
 		}
 		if redBullLiveVideoID(product) != "" {
 			return product, "", nil
+		}
+		if redBullReplayVideoID(product) != "" {
+			replays = append(replays, product)
 		}
 		for _, collection := range product.Collections {
 			if strings.HasSuffix(collection.ID, ":live_programs") {
@@ -137,10 +147,129 @@ func (a *App) discoverRedBullPadelEvent(ctx context.Context, sourceURL, token st
 			}
 		}
 	}
+	sort.SliceStable(replays, func(i, j int) bool { return redBullEventTime(replays[i]).After(redBullEventTime(replays[j])) })
+	for _, replay := range replays {
+		available, err := a.redBullReplayAvailable(ctx, token, redBullReplayVideoID(replay))
+		if err != nil {
+			lookupErrors = append(lookupErrors, err)
+			continue
+		}
+		if available {
+			return replay, "", nil
+		}
+	}
 	if fallbackCollection != "" {
 		return fallbackProduct, fallbackCollection, nil
 	}
-	return redBullProduct{}, "", errors.New("no current Premier Padel event was found")
+	if len(lookupErrors) != 0 {
+		return redBullProduct{}, "", fmt.Errorf("catalog returned by Red Bull could not be fully checked: %w", errors.Join(lookupErrors...))
+	}
+	return redBullProduct{}, "", errNoRedBullEvent
+}
+
+func (a *App) redBullCatalogPage(ctx context.Context, sourceURL string) (string, error) {
+	targets := []string{sourceURL}
+	if sourceURL == redBullEventsURL {
+		targets = []string{redBullPadelURL, redBullEventsURL}
+	}
+	var failures []error
+	for _, target := range targets {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("User-Agent", redBullUserAgent)
+		response, err := a.sourceClient.Do(req)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		body, err := readLimitedBody(response, 8<<20)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if !redBullEventIDPattern.Match(body) {
+			failures = append(failures, errors.New("catalog returned by Red Bull contains no recognizable events"))
+			continue
+		}
+		return string(body), nil
+	}
+	return "", fmt.Errorf("cannot discover Premier Padel catalog: %w", errors.Join(failures...))
+}
+
+func redBullEventTime(product redBullProduct) time.Time {
+	stamp, _ := time.Parse(time.RFC3339, product.Status.StartTime)
+	return stamp
+}
+
+func redBullReplayVideoID(product redBullProduct) string {
+	if product.Status.Code == "post" && strings.HasPrefix(product.Status.Play, "rrn:content:live-videos:") {
+		return product.Status.Play
+	}
+	return ""
+}
+
+// Event profiles can finish while their video remains playable as a replay.
+// Validate the video product rather than assuming that a finished event is broken.
+func (a *App) redBullReplayAvailable(ctx context.Context, token, id string) (bool, error) {
+	var video redBullProduct
+	if err := a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(id), &video); err != nil {
+		return false, err
+	}
+	return video.Playable && video.Status.Code == "post", nil
+}
+
+// A catalog entry may disappear before its video expires. Only use this fallback
+// after a successful discovery with no candidates, never to hide network errors.
+func (a *App) retainedRedBullChannels(ctx context.Context, sourceID int64) ([]playlist.Channel, error) {
+	rows, err := a.db.QueryContext(ctx, `SELECT tvg_id,name,group_name,logo,source_acestream_id FROM channels WHERE source_id=?`, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	var saved []playlist.Channel
+	for rows.Next() {
+		var channel playlist.Channel
+		if err := rows.Scan(&channel.TVGID, &channel.Name, &channel.Group, &channel.Logo, &channel.AceStreamID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		saved = append(saved, channel)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(saved) == 0 {
+		return nil, errNoRedBullEvent
+	}
+	token, err := a.redBullToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var channels []playlist.Channel
+	for _, channel := range saved {
+		if !strings.HasPrefix(channel.AceStreamID, "rrn:content:live-videos:") {
+			continue
+		}
+		var video redBullProduct
+		if err := a.redBullAPIGet(ctx, token, "/products/"+url.PathEscape(channel.AceStreamID), &video); err != nil {
+			return nil, err
+		}
+		if !video.Playable || (video.Status.Code != "live" && video.Status.Code != "post") {
+			continue
+		}
+		channel.BroadcastState = "live"
+		if video.Status.Code == "post" {
+			channel.BroadcastState = "replay"
+		}
+		channels = append(channels, channel)
+	}
+	if len(channels) == 0 {
+		return nil, errNoRedBullEvent
+	}
+	return channels, nil
 }
 
 func redBullLiveVideoID(product redBullProduct) string {
@@ -163,17 +292,30 @@ func (a *App) fetchRedBullPadelChannels(ctx context.Context, sourceURL string) (
 	if group == "" {
 		group = "Premier Padel"
 	}
-	if liveVideoID := redBullLiveVideoID(event); liveVideoID != "" {
+	videoID, broadcastState := redBullLiveVideoID(event), "live"
+	if videoID == "" {
+		videoID, broadcastState = redBullReplayVideoID(event), "replay"
+		if videoID != "" {
+			available, err := a.redBullReplayAvailable(ctx, token, videoID)
+			if err != nil {
+				return nil, err
+			}
+			if !available {
+				return nil, errNoRedBullEvent
+			}
+		}
+	}
+	if liveVideoID := videoID; liveVideoID != "" {
 		name := strings.TrimSpace(event.Subheading)
 		if name == "" {
-			name = group + " en directo"
+			name = group
 		}
 		logoID := event.ID
 		if logoID == "" {
 			logoID = liveVideoID
 		}
 		logo := "https://resources.redbull.tv/" + logoID + "/rbtv_display_art_square/f_webp,c_fill,w_512,h_512,q_80?namespace=rbtv&refresh=true"
-		return []playlist.Channel{{TVGID: liveVideoID, Name: name, Group: group, Logo: logo, AceStreamID: liveVideoID}}, nil
+		return []playlist.Channel{{TVGID: liveVideoID, Name: name, Group: group, Logo: logo, AceStreamID: liveVideoID, BroadcastState: broadcastState}}, nil
 	}
 	var collection redBullCollection
 	if err := a.redBullAPIGet(ctx, token, "/collections/"+url.PathEscape(collectionID), &collection); err != nil {
@@ -181,15 +323,22 @@ func (a *App) fetchRedBullPadelChannels(ctx context.Context, sourceURL string) (
 	}
 	channels := make([]playlist.Channel, 0, len(collection.Items))
 	for _, item := range collection.Items {
-		if item.Status.Code != "live" || !item.Playable || item.ID == "" {
+		if (item.Status.Code != "live" && item.Status.Code != "post") || !item.Playable || !strings.HasPrefix(item.ID, "rrn:content:live-videos:") {
 			continue
 		}
 		name := strings.TrimSpace(item.Title)
 		if name == "" {
-			name = "Premier Padel en directo"
+			name = "Premier Padel"
 		}
 		logo := "https://resources.redbull.tv/" + item.ID + "/rbtv_display_art_square/f_webp,c_fill,w_512,h_512,q_80?namespace=rbtv&refresh=true"
-		channels = append(channels, playlist.Channel{TVGID: item.ID, Name: name, Group: group, Logo: logo, AceStreamID: item.ID})
+		state := "live"
+		if item.Status.Code == "post" {
+			state = "replay"
+		}
+		channels = append(channels, playlist.Channel{TVGID: item.ID, Name: name, Group: group, Logo: logo, AceStreamID: item.ID, BroadcastState: state})
+	}
+	if len(channels) == 0 {
+		return nil, errNoRedBullEvent
 	}
 	return channels, nil
 }

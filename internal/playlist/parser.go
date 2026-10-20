@@ -9,11 +9,12 @@ import (
 )
 
 type Channel struct {
-	TVGID       string `json:"tvg_id"`
-	Name        string `json:"name"`
-	Group       string `json:"group"`
-	Logo        string `json:"logo"`
-	AceStreamID string `json:"acestream_id"`
+	BroadcastState string `json:"broadcast_state,omitempty"`
+	TVGID          string `json:"tvg_id"`
+	Name           string `json:"name"`
+	Group          string `json:"group"`
+	Logo           string `json:"logo"`
+	AceStreamID    string `json:"acestream_id"`
 }
 
 var (

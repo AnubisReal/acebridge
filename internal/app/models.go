@@ -17,17 +17,18 @@ type Source struct {
 }
 
 type Channel struct {
-	ID          int64  `json:"id"`
-	SourceID    int64  `json:"source_id"`
-	SourceName  string `json:"source_name"`
-	SourceKind  string `json:"source_kind"`
-	TVGID       string `json:"tvg_id"`
-	Name        string `json:"name"`
-	Group       string `json:"group"`
-	Logo        string `json:"logo"`
-	AceStreamID string `json:"acestream_id"`
-	StreamType  string `json:"stream_type"`
-	Enabled     bool   `json:"enabled"`
+	BroadcastState string `json:"broadcast_state,omitempty"`
+	ID             int64  `json:"id"`
+	SourceID       int64  `json:"source_id"`
+	SourceName     string `json:"source_name"`
+	SourceKind     string `json:"source_kind"`
+	TVGID          string `json:"tvg_id"`
+	Name           string `json:"name"`
+	Group          string `json:"group"`
+	Logo           string `json:"logo"`
+	AceStreamID    string `json:"acestream_id"`
+	StreamType     string `json:"stream_type"`
+	Enabled        bool   `json:"enabled"`
 }
 
 type Settings struct {

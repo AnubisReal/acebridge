@@ -69,6 +69,22 @@ func (a *App) runSyncJob(ctx context.Context, id, jobID int64) error {
 	}
 	if kind == "redbull_padel" {
 		channels, syncErr := a.fetchRedBullPadelChannels(ctx, sourceURL)
+		if errors.Is(syncErr, errNoRedBullEvent) {
+			channels, syncErr = a.retainedRedBullChannels(ctx, id)
+		}
+		if errors.Is(syncErr, errNoRedBullEvent) {
+			syncErr = withTx(ctx, a.db, func(tx *sql.Tx) error {
+				if _, err := tx.ExecContext(ctx, `UPDATE channels SET broadcast_state='unavailable' WHERE source_id=?`, id); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `UPDATE sources SET last_status='idle',last_error='',last_sync_at=? WHERE id=?`, nowUTC(), id)
+				return err
+			})
+			if syncErr == nil {
+				a.finishSyncJob(ctx, jobID, 0, 0, 0, "")
+				return nil
+			}
+		}
 		if syncErr != nil {
 			a.markSourceError(ctx, id, syncErr)
 			return fail(syncErr)
@@ -197,6 +213,10 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 		identityCounts[channelIdentity(channel)]++
 	}
 	err = withTx(ctx, a.db, func(tx *sql.Tx) error {
+		var sourceKind string
+		if err := tx.QueryRowContext(ctx, `SELECT kind FROM sources WHERE id=?`, sourceID).Scan(&sourceKind); err != nil {
+			return err
+		}
 		type previousChannel struct {
 			id                       int64
 			enabled, locked          bool
@@ -240,6 +260,9 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 		count := 0
 		for _, channel := range channels {
 			sourceAceStreamID := channel.AceStreamID
+			if sourceKind == "redbull_padel" && len(channels) == 1 {
+				channel.TVGID = fmt.Sprintf("acebridge.premier-padel.%d", sourceID)
+			}
 			sourceKey := channelIdentity(channel)
 			if _, ok := seen[channel.AceStreamID]; ok {
 				continue
@@ -248,6 +271,13 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 			enabled := true
 			locked := false
 			value, ok := existing[channel.AceStreamID]
+			// A single Premier Padel channel represents the provider, not a match.
+			// Rotate its upstream video without invalidating exported channel URLs.
+			if !ok && sourceKind == "redbull_padel" && len(channels) == 1 && len(existing) == 1 {
+				for _, previous := range existing {
+					value, ok = previous, true
+				}
+			}
 			if !ok && isDirectStream(channel.AceStreamID) && identityCounts[sourceKey] == 1 && len(byIdentity[sourceKey]) == 1 {
 				value = byIdentity[sourceKey][0]
 				ok = !retained[value.id]
@@ -261,6 +291,9 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 			}
 			if ok && !retained[value.id] {
 				retained[value.id] = true
+				if sourceKind == "redbull_padel" && len(channels) == 1 && value.tvgID != "" {
+					channel.TVGID = value.tvgID
+				}
 				enabled = value.enabled
 				locked = value.locked
 				if value.locked {
@@ -268,14 +301,14 @@ func (a *App) replaceChannels(ctx context.Context, sourceID int64, channels []pl
 					channel.Name = value.name
 					channel.Group = value.group
 					channel.Logo = value.logo
-					if !isDirectStream(sourceAceStreamID) {
+					if !isDirectStream(sourceAceStreamID) && sourceKind != "redbull_padel" {
 						channel.AceStreamID = value.aceStreamID
 					}
 				}
-				_, err = tx.ExecContext(ctx, `UPDATE channels SET tvg_id=?,name=?,group_name=?,logo=?,acestream_id=?,source_acestream_id=?,source_key=?,enabled=?,metadata_locked=? WHERE id=?`, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, sourceKey, enabled, locked, value.id)
+				_, err = tx.ExecContext(ctx, `UPDATE channels SET tvg_id=?,name=?,group_name=?,logo=?,acestream_id=?,source_acestream_id=?,source_key=?,enabled=?,metadata_locked=?,broadcast_state=? WHERE id=?`, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, sourceKey, enabled, locked, channel.BroadcastState, value.id)
 				updated++
 			} else {
-				_, err = tx.ExecContext(ctx, `INSERT INTO channels(source_id,tvg_id,name,group_name,logo,acestream_id,source_acestream_id,source_key,enabled,metadata_locked) VALUES (?,?,?,?,?,?,?,?,?,?)`, sourceID, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, sourceKey, enabled, locked)
+				_, err = tx.ExecContext(ctx, `INSERT INTO channels(source_id,tvg_id,name,group_name,logo,acestream_id,source_acestream_id,source_key,enabled,metadata_locked,broadcast_state) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, sourceID, channel.TVGID, channel.Name, channel.Group, channel.Logo, channel.AceStreamID, sourceAceStreamID, sourceKey, enabled, locked, channel.BroadcastState)
 				added++
 			}
 			if err != nil {

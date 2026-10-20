@@ -98,6 +98,9 @@ CREATE TABLE IF NOT EXISTS channel_diagnostics (
 	if err := ensureColumn(tx, "channels", "source_key", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := ensureColumn(tx, "channels", "broadcast_state", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE channels SET source_acestream_id=acestream_id WHERE source_acestream_id=''; INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES (1,CURRENT_TIMESTAMP),(2,CURRENT_TIMESTAMP)`); err != nil {
 		return err
 	}
